@@ -1,5 +1,6 @@
 (require "helix/editor.scm")
 (require "helix/misc.scm")
+(require "helix/static.scm")
 (require (prefix-in helix. "helix/commands.scm"))
 
 ; creates the cmd :oil
@@ -29,7 +30,30 @@
           (trim-end-matches canonical (path-separator))
           canonical))))
 
-(define (oil)  
-  ; pritn text in the statusline
-  (set-status! (basename (editor-document->path
-                              (editor->doc-id (editor-focus))))))
+(define (entry-display-name full-path)
+  (let ([name (basename full-path)])
+    (if (is-file? full-path)
+        name
+        (string-append name "/"))))
+
+(define (read-oil-entries dir)
+    (let* ([raw     (with-handler
+                      (lambda (err)
+                        (error (string-append "Cannot read directory: "
+                                              (error-object-message err))))
+                      (read-dir dir))]
+           ; convert a full path into a simple path like "folder-name/"
+           [entries (map entry-display-name raw)]
+           ; filter entries by ending in "/"
+           [dirs    (sort (filter (lambda (e) (ends-with? e "/")) entries) string<?)]
+           [files   (sort (filter (lambda (e) (not (ends-with? e "/"))) entries) string<?)])
+      (append (list "../") dirs files)))
+
+
+(define (oil)
+    ; pritn text in the statusline
+    (let* ([doc-id  (editor->doc-id (editor-focus))]
+           [path    (editor-document->path doc-id)]
+           [dir     (if path (parent-name path) (get-helix-cwd))]
+           [entries (read-oil-entries (normalize-dir dir))])
+      (set-status! (string-join entries "  "))))
