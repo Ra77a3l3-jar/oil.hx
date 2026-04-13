@@ -1,11 +1,13 @@
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require "helix/static.scm")
+(require "helix/ext.scm")
+(require "helix/keymaps.scm")
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix. "helix/commands.scm"))
 
 ; creates the cmd :oil
-(provide oil)
+(provide oil oil-enter oil-up)
 
 (define OIL-BUFFER-NAME "*oil*")
 
@@ -83,6 +85,44 @@
             (insert_string content)
             (helix.goto 2)))))
 
+(define (open-oil-for-dir dir)
+    (let* ([canonical (normalize-dir dir)]
+           [entries   (with-handler
+                        (lambda (err)
+                          (set-error! (string-append "oil: " (error-object-message err)))
+                          '())
+                        (read-oil-entries canonical))])
+
+      (set! *oil-dir*      canonical)
+      (set! *oil-original* entries)
+
+      ; install keybindings
+      (install-oil-keybindings!)
+
+      (if (oil-buffer-alive?)
+          (begin
+            (editor-switch-action! *oil-doc-id* (Action/Replace))
+            (populate-oil-buffer! canonical entries))
+          (begin
+            (helix.new)
+            (enqueue-thread-local-callback
+              (lambda ()
+                (let* ([view-id (editor-focus)]
+                       [doc-id  (editor->doc-id view-id)])
+                  (set! *oil-doc-id* doc-id)
+                  (set-scratch-buffer-name! OIL-BUFFER-NAME)
+                  (populate-oil-buffer! canonical entries))))))))
+
+(define (install-oil-keybindings!)
+    ; keybindings when in a oil buffer.
+    (keymap (buffer OIL-BUFFER-NAME)
+            (normal
+              (ret  ":oil-enter")
+              ("-"  ":oil-up")
+              (g    (s ":oil-save"))
+              (R    ":oil-refresh")
+              (q    ":buffer-close"))))
+
 (define (oil)
     (let* ([doc-id  (editor->doc-id (editor-focus))]
            [path    (editor-document->path doc-id)]
@@ -108,3 +148,46 @@
                   (set! *oil-doc-id* doc-id)
                   (set-scratch-buffer-name! OIL-BUFFER-NAME)
                   (populate-oil-buffer! dir entries))))))))
+
+(define (oil-enter)
+    (unless (oil-buffer-alive?)
+      (set-error! "no active oil buffer")
+      (void))
+
+    (when (oil-buffer-alive?)
+      (let* ([rope   (editor->text *oil-doc-id*)]
+             [text   (text.rope->string rope)]
+             [lines  (split-many text "\n")]
+             [line-n (get-current-line-number)]
+             [entry  (if (< line-n (length lines))
+                         (trim (list-ref lines line-n))
+                         #false)])
+        (cond
+          ; header line do nothing
+          [(or (not entry) (string=? entry "") (starts-with? entry *oil-dir*))
+           (void)]
+
+          ; enter parent directory
+          [(string=? entry "../")
+           (open-oil-for-dir (parent-name *oil-dir*))]
+
+          ; enter folder
+          [(ends-with? entry "/")
+           (let ([dirname (trim-end-matches entry "/")])
+             (open-oil-for-dir (path-join *oil-dir* dirname)))]
+
+          ; open file in new buffer
+          [else
+           (helix.open (path-join *oil-dir* entry))]))))
+
+
+; allows to navigate to parent directory shown in the buffer
+(define (oil-up)
+  (if *oil-dir*
+      (open-oil-for-dir (parent-name *oil-dir*))
+      (set-error! "no active oil buffer")))
+
+(define (oil-refresh)
+  (if *oil-dir*
+      (open-oil-for-dir *oil-dir*)
+      (set-error! "no active oil buffer")))
