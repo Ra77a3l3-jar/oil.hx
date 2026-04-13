@@ -7,7 +7,7 @@
 (require (prefix-in helix. "helix/commands.scm"))
 
 ; creates the cmd :oil
-(provide oil oil-enter oil-up)
+(provide oil oil-enter oil-up oil-refresh)
 
 (define OIL-BUFFER-NAME "*oil*")
 
@@ -85,6 +85,69 @@
             (insert_string content)
             (helix.goto 2)))))
 
+(define (entries-are-dir? name)
+    (ends-with? name "/"))
+
+(define (full-path-for entry)
+    (if (entries-are-dir? entry)
+        (path-join *oil-dir* (trim-end-matches entry "/"))
+        (path-join *oil-dir* entry)))
+
+ (define (do-rename! old-name new-name)
+    (let* ([old-path (full-path-for old-name)]
+           [new-path (full-path-for new-name)]
+           ; ~> pipes the value to the process mv and spawns the process
+           [proc     (~> (command "mv" (list old-path new-path))
+                         with-stdout-piped
+                         with-stderr-piped
+                         spawn-process)])
+      (if (Ok? proc)
+          (let ([stderr (read-port-to-string (child-stderr (Ok->value proc)))])
+            (when (not (string=? (trim stderr) ""))
+              (error (trim stderr))))
+          (error "mv: could not spawn process"))))
+
+(define (do-delete! name)
+    (let ([path (full-path-for name)])
+      (if (entries-are-dir? name)
+          (delete-directory! path) ; only works if empty
+          (delete-file! path))))
+
+(define (do-create! name)
+    (let ([path (full-path-for name)])
+      (if (entries-are-dir? name)
+          (create-directory! path)
+          ; call-with-output-file allows to create a file without opening
+          (call-with-output-file path (lambda (_p) (void))))))
+
+; check at each change if it can be a rename or a change like new file or delete
+(define (pair-renames removed added)
+    (let loop ([rem removed] [add added] [renames '()] [leftover-rem '()] [leftover-add '()])
+      (cond
+        [(and (null? rem) (null? add))
+         (list (reverse renames) (reverse leftover-rem) (reverse leftover-add))]
+
+        [(null? rem)
+         (list (reverse renames) (reverse leftover-rem) (append (reverse leftover-add) add))]
+
+        [(null? add)
+         (list (reverse renames) (append (reverse leftover-rem) rem) (reverse leftover-add))]
+
+        ;d Same type (file/file or dir/dir) → rename pair
+        [(equal? (entries-are-dir? (car rem))
+                 (entries-are-dir? (car add)))
+         (loop (cdr rem) (cdr add)
+               (cons (cons (car rem) (car add)) renames)
+               leftover-rem
+               leftover-add)]
+
+        ; different types → can't pair, carry both forward
+        [else
+         (loop (cdr rem) (cdr add)
+               renames
+               (cons (car rem) leftover-rem)
+               (cons (car add) leftover-add))])))
+
 (define (open-oil-for-dir dir)
     (let* ([canonical (normalize-dir dir)]
            [entries   (with-handler
@@ -124,30 +187,10 @@
               (q    ":buffer-close"))))
 
 (define (oil)
-    (let* ([doc-id  (editor->doc-id (editor-focus))]
-           [path    (editor-document->path doc-id)]
-           [dir     (normalize-dir (if path (parent-name path) (get-helix-cwd)))]
-           [entries (with-handler
-                      (lambda (err)
-                        (set-error! (string-append "oil: " (error-object-message err)))
-                        '())
-                      (read-oil-entries dir))])
-      (set! *oil-dir*      dir)
-      (set! *oil-original* entries)
-      (if (oil-buffer-alive?)
-          (begin
-            ; if buffer alredy created reference to existing one when :oil
-            (editor-switch-action! *oil-doc-id* (Action/Replace))
-            (populate-oil-buffer! dir entries))
-          (begin
-            (helix.new) ; creates and focuses the new buffer
-            (enqueue-thread-local-callback
-              (lambda ()
-                (let* ([view-id (editor-focus)]
-                       [doc-id  (editor->doc-id view-id)])
-                  (set! *oil-doc-id* doc-id)
-                  (set-scratch-buffer-name! OIL-BUFFER-NAME)
-                  (populate-oil-buffer! dir entries))))))))
+    (let* ([doc-id (editor->doc-id (editor-focus))]
+           [path   (editor-document->path doc-id)]
+           [dir    (if path (parent-name path) (get-helix-cwd))])
+      (open-oil-for-dir dir)))
 
 (define (oil-enter)
     (unless (oil-buffer-alive?)
