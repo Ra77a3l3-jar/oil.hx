@@ -7,7 +7,7 @@
 (require (prefix-in helix. "helix/commands.scm"))
 
 ; creates the cmd :oil
-(provide oil oil-enter oil-up oil-refresh)
+(provide oil oil-enter oil-up oil-refresh oil-save)
 
 (define OIL-BUFFER-NAME "*oil*")
 
@@ -234,3 +234,76 @@
   (if *oil-dir*
       (open-oil-for-dir *oil-dir*)
       (set-error! "no active oil buffer")))
+
+(define (oil-save)
+    (unless (oil-buffer-alive?)
+      (set-error! "no active oil buffer Run :oil first")
+      (void))
+
+    (when (oil-buffer-alive?)
+      (let* ([rope    (editor->text *oil-doc-id*)]
+             [current (parse-buffer-entries rope)]
+
+             ; strip "../" from both sides before pairing
+             [orig    (filter (lambda (e) (not (string=? e "../"))) *oil-original*)]
+             [curr    (filter (lambda (e) (not (string=? e "../"))) current)]
+
+             [removed (filter (lambda (e) (not (member e curr))) orig)]
+             [added   (filter (lambda (e) (not (member e orig))) curr)]
+
+             ; pair renames
+             [result    (pair-renames removed added)]
+             [renames   (list-ref result 0)]
+             [to-delete (list-ref result 1)]
+             [to-create (list-ref result 2)])
+
+        ; collect errors without aborting
+        (define errors '())
+
+        (define (try! label thunk)
+          (with-handler
+            (lambda (err)
+              (set! errors
+                    (cons (string-append label ": " (error-object-message err))
+                          errors)))
+            (thunk)))
+
+        ; renames file
+        (for-each
+          (lambda (pair)
+            (let ([old (car pair)]
+                  [new (cdr pair)])
+              (unless (string=? old new)
+                (try! (string-append "rename " old " -> " new)
+                      (lambda () (do-rename! old new))))))
+          renames)
+
+        ; delete 
+        (for-each
+          (lambda (name)
+            (try! (string-append "delete " name)
+                  (lambda () (do-delete! name))))
+          to-delete)
+
+        ; create a new file
+        (for-each
+          (lambda (name)
+            (try! (string-append "create " name)
+                  (lambda () (do-create! name))))
+          to-create)
+
+        ; report and refresh
+        (if (null? errors)
+            (begin
+              (let ([n (+ (length renames) (length to-delete) (length to-create))])
+                (if (= n 0)
+                    (set-status! "nothing to do")
+                    (set-status! (string-append "applied "
+                                                (number->string n)
+                                                " operation(s) in "
+                                                *oil-dir*))))
+              (open-oil-for-dir *oil-dir*))
+            (begin
+              (open-oil-for-dir *oil-dir*) ; refresh even on partial failure
+              (set-error! (string-append "errors: "
+                                         (string-join (reverse errors) " | "))))))))
