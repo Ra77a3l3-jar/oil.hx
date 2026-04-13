@@ -2,7 +2,6 @@
 (require "helix/misc.scm")
 (require "helix/static.scm")
 (require "helix/ext.scm")
-(require "helix/keymaps.scm")
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix. "helix/commands.scm"))
 
@@ -159,9 +158,6 @@
       (set! *oil-dir*      canonical)
       (set! *oil-original* entries)
 
-      ; install keybindings
-      (install-oil-keybindings!)
-
       (if (oil-buffer-alive?)
           (begin
             (editor-switch-action! *oil-doc-id* (Action/Replace))
@@ -176,22 +172,16 @@
                   (set-scratch-buffer-name! OIL-BUFFER-NAME)
                   (populate-oil-buffer! canonical entries))))))))
 
-(define (install-oil-keybindings!)
-    ; keybindings when in a oil buffer.
-    (keymap (buffer OIL-BUFFER-NAME)
-            (normal
-              (ret  ":oil-enter")
-              ("-"  ":oil-up")
-              (g    (s ":oil-save"))
-              (R    ":oil-refresh")
-              (q    ":buffer-close"))))
-
+;;@doc
+;; Open oil file manager
 (define (oil)
     (let* ([doc-id (editor->doc-id (editor-focus))]
            [path   (editor-document->path doc-id)]
            [dir    (if path (parent-name path) (get-helix-cwd))])
       (open-oil-for-dir dir)))
 
+;;@doc
+;; Enter directory or open file
 (define (oil-enter)
     (unless (oil-buffer-alive?)
       (set-error! "no active oil buffer")
@@ -223,18 +213,22 @@
           [else
            (helix.open (path-join *oil-dir* entry))]))))
 
-
-; allows to navigate to parent directory shown in the buffer
+;;@doc
+;; Go to parent directory
 (define (oil-up)
   (if *oil-dir*
       (open-oil-for-dir (parent-name *oil-dir*))
       (set-error! "no active oil buffer")))
 
+;;@doc
+;; Refresh oil buffer
 (define (oil-refresh)
   (if *oil-dir*
       (open-oil-for-dir *oil-dir*)
       (set-error! "no active oil buffer")))
 
+;;@doc
+;; Save oil changes
 (define (oil-save)
     (unless (oil-buffer-alive?)
       (set-error! "no active oil buffer Run :oil first")
