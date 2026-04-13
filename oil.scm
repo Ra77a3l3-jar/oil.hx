@@ -7,6 +7,12 @@
 ; creates the cmd :oil
 (provide oil)
 
+(define OIL-BUFFER-NAME "*oil*")
+
+(define *oil-dir*      #false)
+(define *oil-doc-id*   #false)
+(define *oil-original* '())
+
 (define (path-join base name)
   (string-append base (path-separator) name))
 
@@ -56,17 +62,49 @@
           [body   (string-join (map (lambda (e) (string-append "  " e)) entries) "\n")])
       (string-append header body)))
 
-  (define (parse-buffer-entries rope)
+(define (parse-buffer-entries rope)
     (let* ([text  (text.rope->string rope)]
            [lines (split-many text "\n")]
            [data  (if (null? lines) '() (cdr lines))])
       (filter (lambda (e) (> (string-length e) 0))
               (map trim data))))
 
+(define (oil-buffer-alive?)
+  (and *oil-doc-id* (editor-doc-exists? *oil-doc-id*)))
+
+(define (populate-oil-buffer! dir entries)
+    (let ([content (make-buffer-text dir entries)])
+      (if (oil-buffer-alive?)
+          (begin
+            (select_all)
+            (replace-selection-with content)
+            (helix.goto 2))
+          (begin
+            (insert_string content)
+            (helix.goto 2)))))
+
 (define (oil)
     (let* ([doc-id  (editor->doc-id (editor-focus))]
            [path    (editor-document->path doc-id)]
            [dir     (normalize-dir (if path (parent-name path) (get-helix-cwd)))]
-           [entries (read-oil-entries dir)]
-           [text    (make-buffer-text dir entries)])
-      (set-status! (string-join entries "  "))))
+           [entries (with-handler
+                      (lambda (err)
+                        (set-error! (string-append "oil: " (error-object-message err)))
+                        '())
+                      (read-oil-entries dir))])
+      (set! *oil-dir*      dir)
+      (set! *oil-original* entries)
+      (if (oil-buffer-alive?)
+          (begin
+            ; if buffer alredy created reference to existing one when :oil
+            (editor-switch-action! *oil-doc-id* (Action/Replace))
+            (populate-oil-buffer! dir entries))
+          (begin
+            (helix.new) ; creates and focuses the new buffer
+            (enqueue-thread-local-callback
+              (lambda ()
+                (let* ([view-id (editor-focus)]
+                       [doc-id  (editor->doc-id view-id)])
+                  (set! *oil-doc-id* doc-id)
+                  (set-scratch-buffer-name! OIL-BUFFER-NAME)
+                  (populate-oil-buffer! dir entries))))))))
