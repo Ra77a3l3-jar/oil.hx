@@ -80,6 +80,7 @@
             (select_all)
             (replace-selection-with content)
             (collapse_selection) ; prevents selection
+            (helix.goto 2))
           (begin
             (insert_string content)
             (helix.goto 2)))))
@@ -92,19 +93,19 @@
         (path-join *oil-dir* (trim-end-matches entry "/"))
         (path-join *oil-dir* entry)))
 
- (define (do-rename! old-name new-name)
-    (let* ([old-path (full-path-for old-name)]
-           [new-path (full-path-for new-name)]
-           ; ~> pipes the value to the process mv and spawns the process
-           [proc     (~> (command "mv" (list old-path new-path))
-                         with-stdout-piped
-                         with-stderr-piped
-                         spawn-process)])
-      (if (Ok? proc)
+(define (run-mv! from-path to-path)
+  (let ([proc (~> (command "mv" (list from-path to-path))
+                  with-stdout-piped
+                  with-stderr-piped
+                  spawn-process)])
+    (if (Ok? proc)
           (let ([stderr (read-port-to-string (child-stderr (Ok->value proc)))])
             (when (not (string=? (trim stderr) ""))
               (error (trim stderr))))
           (error "mv: could not spawn process"))))
+
+(define (do-rename! old-name new-name)
+  (run-mv! (full-path-for old-name) (full-path-for new-name)))
 
 (define (do-delete! name)
     (let ([path (full-path-for name)])
@@ -271,16 +272,27 @@
             (thunk)))
 
         ; renames file
-        (for-each
-          (lambda (pair)
-            (let ([old (car pair)]
-                  [new (cdr pair)])
-              (unless (string=? old new)
-                (try! (string-append "rename " old " -> " new)
-                      (lambda () (do-rename! old new))))))
-          renames)
+        (let ([actual (filter (lambda (p) (not (string=? (car p) (cdr p)))) renames)])
 
-        ; delete 
+            ; moves every source to a temp name
+            (for-each
+            (lambda (pair)
+                (try! (string-append "rename " (car pair) " -> " (cdr pair))
+                    (lambda ()
+                        (run-mv! (full-path-for (car pair))
+                                (string-append (full-path-for (car pair)) ".~oil~")))))
+            actual)
+
+            ; moves every temp name to the final destination
+            (for-each
+            (lambda (pair)
+                (try! (string-append "rename " (car pair) " -> " (cdr pair))
+                    (lambda ()
+                        (run-mv! (string-append (full-path-for (car pair)) ".~oil~")
+                                (full-path-for (cdr pair))))))
+            actual))
+
+        ; delete
         (for-each
           (lambda (name)
             (try! (string-append "delete " name)
