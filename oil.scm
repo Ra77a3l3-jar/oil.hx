@@ -115,7 +115,15 @@
 (define (do-create! name)
     (let ([path (full-path-for name)])
       (if (entries-are-dir? name)
-          (create-directory! path)
+          (let ([proc (~> (command "mkdir" (list "-p" path)) ; -p allows to create nested folder
+                          with-stdout-piped
+                          with-stderr-piped
+                          spawn-process)])
+            (if (Ok? proc)
+                (let ([stderr (read-port-to-string (child-stderr (Ok->value proc)))])
+                  (when (not (string=? (trim stderr) ""))
+                    (error (trim stderr))))
+                (error "mkdir: could not spawn process")))
           ; call-with-output-file allows to create a file without opening
           (call-with-output-file path (lambda (_p) (void))))))
 
