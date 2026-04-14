@@ -79,7 +79,7 @@
           (begin
             (select_all)
             (replace-selection-with content)
-            (helix.goto 2))
+            (collapse_selection) ; prevents selection
           (begin
             (insert_string content)
             (helix.goto 2)))))
