@@ -36,6 +36,7 @@ forge pkg install --git https://github.com/Ra77a3l3-jar/oil.hx.git
 | `:oil-up` | Navigate to the parent directory |
 | `:oil-save` | Apply all pending edits to the filesystem |
 | `:oil-refresh` | Reload the buffer, discarding unsaved changes |
+| `:oil-close` | Close the buffer |
 
 ### Keybindings (optional)
  
@@ -49,6 +50,7 @@ e = "oil-enter"
 u = "oil-up"
 s = "oil-save"
 r = "oil-refresh"
+q = "oil-close"
 ```
  
 **`init.scm`:**
@@ -61,7 +63,8 @@ r = "oil-refresh"
         (e ":oil-enter")
         (u ":oil-up")
         (s ":oil-save")
-        (r ":oil-refresh")))))
+        (r ":oil-refresh")
+        (q ":oil-close")))))
 ```
  
 With the above, all commands are reachable under `<space>o`

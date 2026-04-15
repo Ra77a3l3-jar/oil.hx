@@ -6,7 +6,7 @@
 (require (prefix-in helix. "helix/commands.scm"))
 
 ; creates the cmd :oil
-(provide oil oil-enter oil-up oil-refresh oil-save)
+(provide oil oil-enter oil-up oil-refresh oil-save oil-close)
 
 (define OIL-BUFFER-NAME "*oil*")
 
@@ -58,9 +58,9 @@
       (append (list "../") dirs files)))
 
 (define (make-buffer-text dir entries)
-    (let ([header (string-append "  " dir "\n")]
+    (let ([header (string-append dir "\n")]
           ; joins items in list with a separator and add a new line at the end with two space
-          [body   (string-join (map (lambda (e) (string-append "  " e)) entries) "\n")])
+          [body   (string-join entries "\n")])
       (string-append header body)))
 
 (define (parse-buffer-entries rope)
@@ -328,3 +328,8 @@
               (open-oil-for-dir *oil-dir*) ; refresh even on partial failure
               (set-error! (string-append "errors: "
                                          (string-join (reverse errors) " | "))))))))
+
+;;@doc
+;; Close the oil buffer
+(define (oil-close)
+    (helix.buffer-close!))
