@@ -133,33 +133,35 @@
             ; call-with-output-file allows to create a file without opening
             (call-with-output-file path (lambda (_p) (void)))))))
 
-; check at each change if it can be a rename or a change like new file or delete
-(define (pair-renames removed added)
+(define (pair-same-type removed added)
+    ; pairs entries of the same type in order
     (let loop ([rem removed] [add added] [renames '()] [leftover-rem '()] [leftover-add '()])
       (cond
         [(and (null? rem) (null? add))
          (list (reverse renames) (reverse leftover-rem) (reverse leftover-add))]
-
         [(null? rem)
          (list (reverse renames) (reverse leftover-rem) (append (reverse leftover-add) add))]
-
         [(null? add)
          (list (reverse renames) (append (reverse leftover-rem) rem) (reverse leftover-add))]
-
-        ;d Same type (file/file or dir/dir) → rename pair
-        [(equal? (entries-are-dir? (car rem))
-                 (entries-are-dir? (car add)))
+        [else
          (loop (cdr rem) (cdr add)
                (cons (cons (car rem) (car add)) renames)
                leftover-rem
-               leftover-add)]
+               leftover-add)])))
 
-        ; different types → can't pair, carry both forward
-        [else
-         (loop (cdr rem) (cdr add)
-               renames
-               (cons (car rem) leftover-rem)
-               (cons (car add) leftover-add))])))
+; check at each change if it can be a rename or a change like new file or delete
+(define (pair-renames removed added)
+    ; it splits by type and pairs each group independently then merge result
+    (let* ([is-file?   (lambda (e) (not (entries-are-dir? e)))]
+           [rem-dirs   (filter entries-are-dir? removed)]
+           [rem-files  (filter is-file? removed)]
+           [add-dirs   (filter entries-are-dir? added)]
+           [add-files  (filter is-file? added)]
+           [dir-result  (pair-same-type rem-dirs  add-dirs)]
+           [file-result (pair-same-type rem-files add-files)])
+      (list (append (list-ref dir-result 0) (list-ref file-result 0))
+            (append (list-ref dir-result 1) (list-ref file-result 1))
+            (append (list-ref dir-result 2) (list-ref file-result 2)))))
 
 (define (open-oil-for-dir dir)
     (let* ([canonical (normalize-dir dir)]
