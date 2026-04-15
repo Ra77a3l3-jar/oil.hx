@@ -104,6 +104,17 @@
               (error (trim stderr))))
           (error "mv: could not spawn process"))))
 
+(define (run-mkdir-p! path)
+    (let ([proc (~> (command "mkdir" (list "-p" path)) ; allows to create nested folders with parent new
+                    with-stdout-piped
+                    with-stderr-piped
+                    spawn-process)])
+      (if (Ok? proc)
+          (let ([stderr (read-port-to-string (child-stderr (Ok->value proc)))])
+            (when (not (string=? (trim stderr) ""))
+              (error (trim stderr))))
+          (error "mkdir: could not spawn process"))))
+
 (define (do-rename! old-name new-name)
   (run-mv! (full-path-for old-name) (full-path-for new-name)))
 
@@ -116,17 +127,11 @@
 (define (do-create! name)
     (let ([path (full-path-for name)])
       (if (entries-are-dir? name)
-          (let ([proc (~> (command "mkdir" (list "-p" path)) ; -p allows to create nested folder
-                          with-stdout-piped
-                          with-stderr-piped
-                          spawn-process)])
-            (if (Ok? proc)
-                (let ([stderr (read-port-to-string (child-stderr (Ok->value proc)))])
-                  (when (not (string=? (trim stderr) ""))
-                    (error (trim stderr))))
-                (error "mkdir: could not spawn process")))
-          ; call-with-output-file allows to create a file without opening
-          (call-with-output-file path (lambda (_p) (void))))))
+          (run-mkdir-p! path)
+          (begin
+            (run-mkdir-p! (parent-name path))   ; ensure parent exists first
+            ; call-with-output-file allows to create a file without opening
+            (call-with-output-file path (lambda (_p) (void)))))))
 
 ; check at each change if it can be a rename or a change like new file or delete
 (define (pair-renames removed added)
