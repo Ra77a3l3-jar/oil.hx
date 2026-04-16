@@ -13,6 +13,7 @@
 (define *oil-dir*      #false)
 (define *oil-doc-id*   #false)
 (define *oil-original* '())
+(define *oil-git-status* '())
 
 (define (path-join base name)
   (string-append base (path-separator) name))
@@ -173,6 +174,9 @@
 
       (set! *oil-dir*      canonical)
       (set! *oil-original* entries)
+      (set! *oil-git-status* (if (git-repo? canonical)
+                             (parse-git-status-pairs canonical)
+                             '()))
 
       (if (oil-buffer-alive?)
           (begin
@@ -187,6 +191,67 @@
                   (set! *oil-doc-id* doc-id)
                   (set-scratch-buffer-name! OIL-BUFFER-NAME)
                   (populate-oil-buffer! canonical entries))))))))
+
+(define (git-repo? dir)
+  (let ([proc (~> (command "git" (list "-C" dir "rev-parse" "--is-inside-work-tree"))
+                  with-stdout-piped
+                  with-stderr-piped
+                  spawn-process)])
+    (and (Ok? proc)
+         ; extracts from Ok and gets the stdout to check if there is the "true" returned by git
+         (string=? (trim (read-port-to-string (child-stdout (Ok->value proc)))) "true"))))
+
+(define (parse-git-line line)
+    ; parse one porcelain line, returns alist or #false to skip.
+    (if (< (string-length line) 4)
+        #false
+        ; extracting status chars from porcellain
+        (let* ([x    (substring line 0 1)]
+               [y    (substring line 1 2)]
+               [path (trim (substring line 3 (string-length line)))]
+               ; renames look like "old.txt -> new.txt" — we only care about the new name
+               [path (if (string=? x "R")
+                         (let ([parts (split-many path " -> ")])
+                           (if (>= (length parts) 2) (list-ref parts 1) path))
+                         path)]
+               [label (cond
+                        [(string=? x "?") " ?"]   ; untracked
+                        [(string=? x "!") " !"]   ; ignored
+                        [(string=? x "R") " →"]   ; renamed
+                        [(string=? x "A") " +"]   ; new staged file
+                        [(or (string=? x "M")
+                             (string=? y "M")) " ~"]  ; modified
+                        [else #false])])
+          (if label (cons label path) #false))))
+
+(define (parse-git-status-pairs dir)
+  (let ([proc (~> (command "git" (list "-C" dir "status" "--porcelain"))
+                  with-stdout-piped
+                  with-stderr-piped
+                  spawn-process)])
+    (if (Ok? proc)
+        (let* ([output (read-port-to-string (child-stdout (Ok->value proc)))]
+               [lines  (filter (lambda (l) (> (string-length l) 0))
+                               (split-many output "\n"))])
+          (filter (lambda (x) x)
+                  (map parse-git-line lines)))
+        '())))
+
+(define (entry-git-status entry)
+  (let ([name (if (entries-are-dir? entry)
+                  (trim-end-matches entry "/") ; trim / from dir
+                  entry)])
+    (let loop ([ps *oil-git-status*]) ; loops alist
+      (if (null? ps)
+          #false
+          (let ([git-path (cdr (car ps))]
+                [lable    (car (car ps))])
+            ; match file or directory
+            (if (or (string=? git-path name)
+                    (starts-with? git-path (string-append name "/")))
+                lable
+                (loop (cdr ps))))))))
+
 
 ;;@doc
 ;; Open oil file manager
