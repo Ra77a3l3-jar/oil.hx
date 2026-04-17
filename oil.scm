@@ -14,6 +14,7 @@
 (define *oil-doc-id*   #false)
 (define *oil-original* '())
 (define *oil-git-status* '())
+(define *oil-hint-ids* '())
 
 (define (path-join base name)
   (string-append base (path-separator) name))
@@ -116,9 +117,6 @@
               (error (trim stderr))))
           (error "mkdir: could not spawn process"))))
 
-(define (do-rename! old-name new-name)
-  (run-mv! (full-path-for old-name) (full-path-for new-name)))
-
 (define (do-delete! name)
     (let ([path (full-path-for name)])
       (if (entries-are-dir? name)
@@ -181,7 +179,11 @@
       (if (oil-buffer-alive?)
           (begin
             (editor-switch-action! *oil-doc-id* (Action/Replace))
-            (populate-oil-buffer! canonical entries))
+            (populate-oil-buffer! canonical entries)
+            (enqueue-thread-local-callback       ; <-- add this
+                (lambda ()
+                  (clear-oil-hints!)
+                  (apply-oil-hints! entries))))
           (begin
             (helix.new)
             (enqueue-thread-local-callback
@@ -190,7 +192,9 @@
                        [doc-id  (editor->doc-id view-id)])
                   (set! *oil-doc-id* doc-id)
                   (set-scratch-buffer-name! OIL-BUFFER-NAME)
-                  (populate-oil-buffer! canonical entries))))))))
+                  (populate-oil-buffer! canonical entries)
+                  (clear-oil-hints!)
+                  (apply-oil-hints! entries))))))))
 
 (define (git-repo? dir)
   (let ([proc (~> (command "git" (list "-C" dir "rev-parse" "--is-inside-work-tree"))
@@ -274,6 +278,34 @@
                 lable
                 (loop (cdr ps))))))))
 
+(define (line-end-char-index lines n)
+    (let loop ([i 0] [pos 0])
+      (if (= i n)
+          (+ pos (string-length (list-ref lines i)))
+          (loop (+ i 1) (+ pos (string-length (list-ref lines i)) 1)))))
+
+  (define (clear-oil-hints!)
+    ; id (list first-line last-line)
+    (for-each
+      (lambda (id) (remove-inlay-hint-by-id (list-ref id 0) (list-ref id 1)))
+      *oil-hint-ids*)
+    (set! *oil-hint-ids* '()))
+
+  (define (apply-oil-hints! entries)
+    ; entries[0] = "../" lives on buffer line 1 and line 0 is  the header
+    (when (oil-buffer-alive?)
+      (let* ([rope  (editor->text *oil-doc-id*)]
+             [text  (text.rope->string rope)]
+             [lines (split-many text "\n")])
+        (let loop ([i 0] [ents entries])
+          (unless (null? ents)
+            (let* ([entry  (car ents)]
+                   [line-n (+ i 1)]
+                   [label  (entry-git-status entry)])
+              (when (and label (< line-n (length lines)))
+                (let ([hint-id (add-inlay-hint (line-end-char-index lines line-n) label)])
+                  (set! *oil-hint-ids* (cons hint-id *oil-hint-ids*)))))
+            (loop (+ i 1) (cdr ents)))))))
 
 ;;@doc
 ;; Open oil file manager
