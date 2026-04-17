@@ -81,10 +81,10 @@
             (select_all)
             (replace-selection-with content)
             (collapse_selection) ; prevents selection
-            (helix.goto 2))
+            (helix.goto-line 2))
           (begin
             (insert_string content)
-            (helix.goto 2)))))
+            (helix.goto-line 2)))))
 
 (define (entries-are-dir? name)
     (ends-with? name "/"))
@@ -201,6 +201,15 @@
          ; extracts from Ok and gets the stdout to check if there is the "true" returned by git
          (string=? (trim (read-port-to-string (child-stdout (Ok->value proc)))) "true"))))
 
+(define (git-repo-root dir)
+    (let ([proc (~> (command "git" (list "-C" dir "rev-parse" "--show-toplevel"))
+                    with-stdout-piped with-stderr-piped spawn-process)])
+      (if (Ok? proc)
+          ; extracts from Ok and gets the stdout to check if there is the "true" returned by git
+          (let ([out (trim (read-port-to-string (child-stdout (Ok->value proc))))])
+            (if (string=? out "") #false out))
+          #false)))
+
 (define (parse-git-line line)
     ; parse one porcelain line, returns alist or #false to skip.
     (if (< (string-length line) 4)
@@ -225,17 +234,30 @@
           (if label (cons label path) #false))))
 
 (define (parse-git-status-pairs dir)
-  (let ([proc (~> (command "git" (list "-C" dir "status" "--porcelain"))
-                  with-stdout-piped
-                  with-stderr-piped
-                  spawn-process)])
-    (if (Ok? proc)
-        (let* ([output (read-port-to-string (child-stdout (Ok->value proc)))]
-               [lines  (filter (lambda (l) (> (string-length l) 0))
-                               (split-many output "\n"))])
-          (filter (lambda (x) x)
-                  (map parse-git-line lines)))
-        '())))
+    (let* ([root (git-repo-root dir)]
+           [proc (~> (command "git" (list "-C" dir "status" "--porcelain"))
+                     with-stdout-piped with-stderr-piped spawn-process)])
+      (if (Ok? proc)
+          (let* ([output (read-port-to-string (child-stdout (Ok->value proc)))]
+                 [lines  (filter (lambda (l) (> (string-length l) 0))
+                                 (split-many output "\n"))]
+                 [prefix (if (or (not root) (string=? dir root))
+                             ""
+                             (string-append (substring dir (+ (string-length root) 1)) "/"))])
+            (filter (lambda (x) x)
+                    (map (lambda (line)
+                           (let ([pair (parse-git-line line)])
+                             (and pair
+                                  (let* ([label    (car pair)]
+                                         [git-path (cdr pair)]
+                                         [rel      (if (string=? prefix "")
+                                                       git-path
+                                                       (if (starts-with? git-path prefix)
+                                                           (substring git-path (string-length prefix))
+                                                           #false))])
+                                    (and rel (cons label rel))))))
+                         lines)))
+          '())))
 
 (define (entry-git-status entry)
   (let ([name (if (entries-are-dir? entry)
