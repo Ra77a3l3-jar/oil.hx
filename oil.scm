@@ -284,28 +284,47 @@
           (+ pos (string-length (list-ref lines i)))
           (loop (+ i 1) (+ pos (string-length (list-ref lines i)) 1)))))
 
-  (define (clear-oil-hints!)
-    ; id (list first-line last-line)
-    (for-each
-      (lambda (id) (remove-inlay-hint-by-id (list-ref id 0) (list-ref id 1)))
-      *oil-hint-ids*)
-    (set! *oil-hint-ids* '()))
+(define (clear-oil-hints!)
+  (for-each
+    (lambda (id) (remove-inlay-hint-by-id (list-ref id 0) (list-ref id 1)))
+    *oil-hint-ids*)
+  (set! *oil-hint-ids* '()))
 
-  (define (apply-oil-hints! entries)
-    ; entries[0] = "../" lives on buffer line 1 and line 0 is  the header
+(define (apply-oil-hints! entries)
+  ; entries[0] = "../" lives on buffer line 1 and line 0 is the header
+  (when (oil-buffer-alive?)
+    (let* ([rope  (editor->text *oil-doc-id*)]
+           [text  (text.rope->string rope)]
+           [lines (split-many text "\n")])
+      (let loop ([i 0] [ents entries])
+        (unless (null? ents)
+          (let* ([entry  (car ents)]
+                 [line-n (+ i 1)]
+                 [label  (entry-git-status entry)])
+            (when (and label (< line-n (length lines)))
+              (let ([hint-id (add-inlay-hint (line-end-char-index lines line-n) label)])
+                (set! *oil-hint-ids* (cons hint-id *oil-hint-ids*)))))
+          (loop (+ i 1) (cdr ents)))))))
+
+(define (reapply-oil-hints!)
+    ;; Re-derive hints from the current buffer text line by line.
+    ;; entry-git-status looks up the trimmed line content in *oil-git-status*,
+    ;; so blank or header lines produce #false and get no hint.
     (when (oil-buffer-alive?)
+      (clear-oil-hints!)
       (let* ([rope  (editor->text *oil-doc-id*)]
              [text  (text.rope->string rope)]
              [lines (split-many text "\n")])
-        (let loop ([i 0] [ents entries])
-          (unless (null? ents)
-            (let* ([entry  (car ents)]
-                   [line-n (+ i 1)]
-                   [label  (entry-git-status entry)])
-              (when (and label (< line-n (length lines)))
-                (let ([hint-id (add-inlay-hint (line-end-char-index lines line-n) label)])
-                  (set! *oil-hint-ids* (cons hint-id *oil-hint-ids*)))))
-            (loop (+ i 1) (cdr ents)))))))
+        (let loop ([i 1])   ; i=0 is the header line, skip it
+          (when (< i (length lines))
+            (let* ([entry (trim (list-ref lines i))]
+                   [label (if (> (string-length entry) 0)
+                              (entry-git-status entry)
+                              #false)])
+              (when label
+                (let ([id (add-inlay-hint (line-end-char-index lines i) label)])
+                  (set! *oil-hint-ids* (cons id *oil-hint-ids*)))))
+            (loop (+ i 1)))))))
 
 ;;@doc
 ;; Open oil file manager
@@ -452,3 +471,10 @@
 ;; Close the oil buffer
 (define (oil-close)
     (helix.buffer-close!))
+
+(register-hook 'document-changed
+    (lambda (doc-id _old-text)
+      (when (and (oil-buffer-alive?)
+                 (equal? doc-id *oil-doc-id*)
+                 (not (null? *oil-git-status*)))
+        (enqueue-thread-local-callback reapply-oil-hints!))))
