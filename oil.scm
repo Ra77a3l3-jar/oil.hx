@@ -6,7 +6,16 @@
 (require (prefix-in helix. "helix/commands.scm"))
 
 ; creates the cmd :oil
-(provide oil oil-enter oil-up oil-refresh oil-save oil-close)
+(provide oil
+         oil-enter
+         oil-up
+         oil-refresh
+         oil-save
+         oil-close
+         oil-yank
+         oil-cut
+         oil-paste
+         oil-clipboard-clear)
 
 (define OIL-BUFFER-NAME "*oil*")
 
@@ -15,6 +24,8 @@
 (define *oil-original* '())
 (define *oil-git-status* '())
 (define *oil-hint-ids* '())
+(define *oil-clipboard-op*   #false)
+(define *oil-clipboard-path* #false)
 
 (define (path-join base name)
   (string-append base (path-separator) name))
@@ -116,6 +127,33 @@
             (when (not (string=? (trim stderr) ""))
               (error (trim stderr))))
           (error "mkdir: could not spawn process"))))
+
+(define (run-cp-r! src dest)
+    ; -r copies directories recursively and works for files
+    (let ([proc (~> (command "cp" (list "-r" src dest))
+                    with-stdout-piped
+                    with-stderr-piped
+                    spawn-process)])
+      (if (Ok? proc)
+          (let ([stderr (read-port-to-string (child-stderr (Ok->value proc)))])
+            (when (not (string=? (trim stderr) ""))
+              (error (trim stderr))))
+          (error "cp: could not spawn process"))))
+
+(define (oil-current-entry)
+    (and (oil-buffer-alive?)
+         (let* ([rope   (editor->text *oil-doc-id*)]
+                [text   (text.rope->string rope)]
+                [lines  (split-many text "\n")]
+                [line-n (get-current-line-number)]
+                [entry  (if (< line-n (length lines))
+                            (trim (list-ref lines line-n))
+                            #false)])
+           (and entry
+                (not (string=? entry ""))
+                (not (starts-with? entry *oil-dir*))
+                (not (string=? entry "../"))
+                entry))))
 
 (define (do-delete! name)
     (let ([path (full-path-for name)])
@@ -471,6 +509,66 @@
 ;; Close the oil buffer
 (define (oil-close)
     (helix.buffer-close!))
+
+;;@doc
+;; Mark the entry under cursor for copying
+(define (oil-yank)
+    (let ([entry (oil-current-entry)])
+      (if entry
+          (begin
+            (set! *oil-clipboard-op*   'copy)
+            (set! *oil-clipboard-path* (full-path-for entry))
+            ; basename shows just the name not the full path
+            (set-status! (string-append "yank: " entry)))
+          (set-error! "no entry under cursor"))))
+
+;;@doc
+;; Mark the entry under cursor for moving
+(define (oil-cut)
+    (let ([entry (oil-current-entry)])
+      (if entry
+          (begin
+            (set! *oil-clipboard-op*   'move)
+            (set! *oil-clipboard-path* (full-path-for entry))
+            (set-status! (string-append "cut: " entry)))
+          (set-error! "no entry under cursor"))))
+
+;;@doc
+;; Paste clipboard item into the current oil directory
+(define (oil-paste)
+    (cond
+      [(not (oil-buffer-alive?))
+       (set-error! "no active oil buffer")]
+
+      [(not *oil-clipboard-path*)
+       (set-error! "clipboard is empty")]
+
+      [else
+       (let* ([src  *oil-clipboard-path*]
+              [name (basename src)]
+              [dest (path-join *oil-dir* name)])
+         (with-handler
+           (lambda (err)
+             (set-error! (string-append "paste failed: " (error-object-message err))))
+           (begin
+             (cond
+               [(eq? *oil-clipboard-op* 'copy)
+                (run-cp-r! src dest)
+                (set-status! (string-append "copied " name " -> " *oil-dir*))]
+               [(eq? *oil-clipboard-op* 'move)
+                (run-mv! src dest)
+                (set! *oil-clipboard-op*   #false)
+                (set! *oil-clipboard-path* #false)
+                (set-status! (string-append "moved " name " -> " *oil-dir*))])
+             (open-oil-for-dir *oil-dir*))))]))
+
+
+;;@doc
+;; Clear the clipboard
+(define (oil-clipboard-clear)
+    (set! *oil-clipboard-op*   #false)
+    (set! *oil-clipboard-path* #false)
+    (set-status! "clipboard cleared"))
 
 (register-hook 'document-changed
     (lambda (doc-id _old-text)
