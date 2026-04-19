@@ -44,6 +44,18 @@ forge pkg install --git https://github.com/Ra77a3l3-jar/oil.hx.git
 | `:oil-paste` | Paste the oil clipboard entry into the current directory |
 | `:oil-clipboard-clear` | Clear the oil clipboard |
 
+### Git support
+
+When inside a git repository, oil.hx automatically runs `git status` and shows inline hints next to each entry:
+
+| Hint | Meaning |
+|---|---|
+| `~` | Modified |
+| `+` | Staged (new file) |
+| `→` | Renamed |
+| `?` | Untracked |
+| `!` | Ignored |
+
 ### Keybindings (optional)
  
 You can bind the commands to keys either in `config.toml` or in `init.scm`.
