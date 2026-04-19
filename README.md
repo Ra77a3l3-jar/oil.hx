@@ -5,6 +5,8 @@ A file manager plugin for [Helix](https://github.com/helix-editor/helix/) that l
  
 > Heavily inspired by [oil.nvim](https://github.com/stevearc/oil.nvim).
 
+![oil.hx preview](assets/preview.gif)
+
 ---
  
 ## Installation
@@ -37,6 +39,10 @@ forge pkg install --git https://github.com/Ra77a3l3-jar/oil.hx.git
 | `:oil-save` | Apply all pending edits to the filesystem |
 | `:oil-refresh` | Reload the buffer, discarding unsaved changes |
 | `:oil-close` | Close the buffer |
+| `:oil-yank` | Yank (copy) the entry under the cursor to the oil clipboard |
+| `:oil-cut` | Cut the entry under the cursor to the oil clipboard |
+| `:oil-paste` | Paste the oil clipboard entry into the current directory |
+| `:oil-clipboard-clear` | Clear the oil clipboard |
 
 ### Keybindings (optional)
  
@@ -51,6 +57,12 @@ u = "oil-up"
 s = "oil-save"
 r = "oil-refresh"
 q = "oil-close"
+
+[keys.normal.space.o.m]
+y = "oil-yank"
+x = "oil-cut"
+p = "oil-paste"
+c = "oil-clipboard-clear"
 ```
  
 **`init.scm`:**
@@ -64,10 +76,15 @@ q = "oil-close"
         (u ":oil-up")
         (s ":oil-save")
         (r ":oil-refresh")
-        (q ":oil-close")))))
+        (q ":oil-close")
+        (m
+          (y ":oil-yank")
+          (x ":oil-cut")
+          (p ":oil-paste")
+          (c ":oil-clipboard-clear"))))))
 ```
  
-With the above, all commands are reachable under `<space>o`
+With the above, all commands are reachable under `<space>o` and clipboard operations under `<space>om`
 
 ---
 
