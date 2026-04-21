@@ -19,12 +19,16 @@ A file manager plugin for [Helix](https://github.com/helix-editor/helix/) that l
 forge pkg install --git https://github.com/Ra77a3l3-jar/oil.hx.git
 ```
  
-**3. Load the plugin** by adding this line to your `init.scm`:
+**3. Load the plugin** by adding this to your `init.scm`:
  
 ```scheme
 (require "oil/oil.scm")
+
+;; Optional: set defaults (both #false by default)
+;; (oil-configure! show-dotfiles show-git-ignored)
+(oil-configure! #false #false)
 ```
- 
+
 ---
 
 ## Usage
@@ -36,6 +40,7 @@ forge pkg install --git https://github.com/Ra77a3l3-jar/oil.hx.git
 | `:oil` | Open the file manager in the current directory |
 | `:oil-enter` | Enter the directory under the cursor |
 | `:oil-up` | Navigate to the parent directory |
+| `:oil-back` | Navigate to the parent directory |
 | `:oil-save` | Apply all pending edits to the filesystem |
 | `:oil-refresh` | Reload the buffer, discarding unsaved changes |
 | `:oil-close` | Close the buffer |
@@ -43,6 +48,9 @@ forge pkg install --git https://github.com/Ra77a3l3-jar/oil.hx.git
 | `:oil-cut` | Cut the entry under the cursor to the oil clipboard |
 | `:oil-paste` | Paste the oil clipboard entry into the current directory |
 | `:oil-clipboard-clear` | Clear the oil clipboard |
+| `:oil-root` | Jump to the git repository root (or helix cwd) |
+| `:oil-toggle-hidden` | Toggle visibility of hidden dotfiles and directories |
+| `:oil-toggle-git-ignored` | Toggle visibility of git-ignored files and directories |
 
 ### Git support
 
@@ -65,10 +73,13 @@ You can bind the commands to keys either in `config.toml` or in `init.scm`.
 [keys.normal.space.o]
 o = "oil"
 e = "oil-enter"
-u = "oil-up"
+b = "oil-back"
+g = "oil-root"
 s = "oil-save"
 r = "oil-refresh"
 q = "oil-close"
+h = "oil-toggle-hidden"
+i = "oil-toggle-git-ignored"
 
 [keys.normal.space.o.m]
 y = "oil-yank"
@@ -85,10 +96,13 @@ c = "oil-clipboard-clear"
       (o
         (o ":oil")
         (e ":oil-enter")
-        (u ":oil-up")
+        (b ":oil-back")
+        (g ":oil-root")
         (s ":oil-save")
         (r ":oil-refresh")
         (q ":oil-close")
+        (h ":oil-toggle-hidden")
+        (i ":oil-toggle-git-ignored")
         (m
           (y ":oil-yank")
           (x ":oil-cut")
@@ -96,7 +110,9 @@ c = "oil-clipboard-clear"
           (c ":oil-clipboard-clear"))))))
 ```
  
-With the above, all commands are reachable under `<space>o` and clipboard operations under `<space>om`
+With the above, all commands are reachable under `<space>o` and clipboard operations under `<space>om`.
+
+The header line shows active flags: `[+h]` when dotfiles are visible, `[+i]` when git-ignored files are visible.
 
 ---
 

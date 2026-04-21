@@ -9,9 +9,13 @@
 (provide oil
          oil-enter
          oil-up
+         oil-root
          oil-refresh
          oil-save
          oil-close
+         oil-toggle-hidden
+         oil-toggle-git-ignored
+         oil-configure!
          oil-yank
          oil-cut
          oil-paste
@@ -19,13 +23,15 @@
 
 (define OIL-BUFFER-NAME "*oil*")
 
-(define *oil-dir*      #false)
-(define *oil-doc-id*   #false)
+(define *oil-dir* #false)
+(define *oil-doc-id* #false)
 (define *oil-original* '())
 (define *oil-git-status* '())
 (define *oil-hint-ids* '())
-(define *oil-clipboard-op*   #false)
+(define *oil-clipboard-op* #false)
 (define *oil-clipboard-path* #false)
+(define *oil-show-hidden* #false)
+(define *oil-show-git-ignored* #false)
 
 (define (path-join base name)
   (string-append base (path-separator) name))
@@ -57,23 +63,33 @@
         name
         (string-append name "/"))))
 
+(define (hidden-entry? name)
+  (and (> (string-length name) 0)
+       (char=? (string-ref name 0) #\.)))
+
 (define (read-oil-entries dir)
     (let* ([raw     (with-handler
                       (lambda (err)
                         (error (string-append "Cannot read directory: "
                                               (error-object-message err))))
                       (read-dir dir))]
-           ; convert a full path into a simple path like "folder-name/"
            [entries (map entry-display-name raw)]
-           ; filter entries by ending in "/"
-           [dirs    (sort (filter (lambda (e) (ends-with? e "/")) entries) string<?)]
-           [files   (sort (filter (lambda (e) (not (ends-with? e "/"))) entries) string<?)])
+           [visible (if *oil-show-hidden*
+                        entries
+                        (filter (lambda (e)
+                                  (not (hidden-entry? (trim-end-matches e "/"))))
+                                entries))]
+           [dirs    (sort (filter (lambda (e) (ends-with? e "/")) visible) string<?)]
+           [files   (sort (filter (lambda (e) (not (ends-with? e "/"))) visible) string<?)])
       (append (list "../") dirs files)))
 
 (define (make-buffer-text dir entries)
-    (let ([header (string-append dir "\n")]
-          ; joins items in list with a separator and add a new line at the end with two space
-          [body   (string-join entries "\n")])
+    (let* ([flags  (string-append
+                     ; display if the git ignored toggle or the dotfile toggle is active
+                     (if *oil-show-hidden* " [+h]" "")
+                     (if *oil-show-git-ignored* " [+i]" ""))]
+           [header (string-append dir flags "\n")]
+           [body   (string-join entries "\n")])
       (string-append header body)))
 
 (define (parse-buffer-entries rope)
@@ -202,23 +218,28 @@
 
 (define (open-oil-for-dir dir)
     (let* ([canonical (normalize-dir dir)]
-           [entries   (with-handler
-                        (lambda (err)
-                          (set-error! (string-append "oil: " (error-object-message err)))
-                          '())
-                        (read-oil-entries canonical))])
-
-      (set! *oil-dir*      canonical)
+           [git-status (if (git-repo? canonical)
+                            (parse-git-status-pairs canonical)
+                            '())]
+           [raw-entries (with-handler
+                          (lambda (err)
+                            (set-error! (string-append "oil: " (error-object-message err)))
+                            '())
+                          (read-oil-entries canonical))]
+           [entries (if *oil-show-git-ignored*
+                            raw-entries
+                            (filter (lambda (e)
+                                      (not (git-ignored-in? e git-status)))
+                                    raw-entries))])
+      (set! *oil-dir* canonical)
       (set! *oil-original* entries)
-      (set! *oil-git-status* (if (git-repo? canonical)
-                             (parse-git-status-pairs canonical)
-                             '()))
+      (set! *oil-git-status* git-status)
 
       (if (oil-buffer-alive?)
           (begin
             (editor-switch-action! *oil-doc-id* (Action/Replace))
             (populate-oil-buffer! canonical entries)
-            (enqueue-thread-local-callback       ; <-- add this
+            (enqueue-thread-local-callback
                 (lambda ()
                   (clear-oil-hints!)
                   (apply-oil-hints! entries))))
@@ -275,9 +296,22 @@
                         [else #false])])
           (if label (cons label path) #false))))
 
+(define (git-ignored-in? entry git-status)
+  (let ([name (if (entries-are-dir? entry)
+                  (trim-end-matches entry "/")
+                  entry)])
+    (let loop ([ps git-status])
+      (if (null? ps)
+          #false
+          (if (and (string=? (car (car ps)) " !")
+                   (or (string=? (cdr (car ps)) name)
+                       (starts-with? (cdr (car ps)) (string-append name "/"))))
+              #true
+              (loop (cdr ps)))))))
+
 (define (parse-git-status-pairs dir)
     (let* ([root (git-repo-root dir)]
-           [proc (~> (command "git" (list "-C" dir "status" "--porcelain"))
+           [proc (~> (command "git" (list "-C" dir "status" "--porcelain" "--ignored"))
                      with-stdout-piped with-stderr-piped spawn-process)])
       (if (Ok? proc)
           (let* ([output (read-port-to-string (child-stdout (Ok->value proc)))]
@@ -418,6 +452,42 @@
   (if *oil-dir*
       (open-oil-for-dir *oil-dir*)
       (set-error! "no active oil buffer")))
+
+;;@doc
+;; Jump to the git repository root, or helix cwd if not in a repo
+(define (oil-root)
+  (let ([root (and *oil-dir* (git-repo-root *oil-dir*))])
+    (open-oil-for-dir (or root (get-helix-cwd)))))
+
+;;@doc
+;; Toggle visibility of hidden (dot) files and directories
+(define (oil-toggle-hidden)
+  (if *oil-dir*
+      (begin
+        (set! *oil-show-hidden* (not *oil-show-hidden*))
+        (open-oil-for-dir *oil-dir*)
+        (set-status! (if *oil-show-hidden*
+                         "oil: showing dotfiles"
+                         "oil: hiding dotfiles")))
+      (set-error! "no active oil buffer")))
+
+;;@doc
+;; Toggle visibility of git-ignored files and directories
+(define (oil-toggle-git-ignored)
+  (if *oil-dir*
+      (begin
+        (set! *oil-show-git-ignored* (not *oil-show-git-ignored*))
+        (open-oil-for-dir *oil-dir*)
+        (set-status! (if *oil-show-git-ignored*
+                         "oil: showing git-ignored files"
+                         "oil: hiding git-ignored files")))
+      (set-error! "no active oil buffer")))
+
+;;@doc
+;; Set default visibility for dotfiles and git-ignored entries.
+(define (oil-configure! show-hidden show-git-ignored)
+  (set! *oil-show-hidden* show-hidden)
+  (set! *oil-show-git-ignored* show-git-ignored))
 
 ;;@doc
 ;; Save oil changes
