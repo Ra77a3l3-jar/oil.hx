@@ -15,6 +15,7 @@
          oil-close
          oil-toggle-hidden
          oil-toggle-git-ignored
+         oil-toggle-metadata
          oil-configure!
          oil-yank
          oil-cut
@@ -32,6 +33,8 @@
 (define *oil-clipboard-path* #false)
 (define *oil-show-hidden* #false)
 (define *oil-show-git-ignored* #false)
+(define *oil-metadata* '())
+(define *oil-show-metadata* #false)
 
 (define (path-join base name)
   (string-append base (path-separator) name))
@@ -82,6 +85,61 @@
            [dirs    (sort (filter (lambda (e) (ends-with? e "/")) visible) string<?)]
            [files   (sort (filter (lambda (e) (not (ends-with? e "/"))) visible) string<?)])
       (append (list "../") dirs files)))
+
+(define (format-file-size bytes-str)
+  (let ([n (string->number bytes-str)])
+    (cond
+      [(not n) "?"]
+      [(< n 1024) (string-append (number->string n) "B")]
+      [(< n (* 1024 1024)) (string-append (number->string (quotient n 1024)) "K")]
+      [(< n (* 1024 1024 1024)) (string-append (number->string (quotient n (* 1024 1024))) "M")]
+      [else (string-append (number->string (quotient n (* 1024 1024 1024))) "G")])))
+
+(define (format-permissions perms)
+  ; strip leading '-' for regular files (uninformative), keep 'd', 'l', etc.
+  (if (and (> (string-length perms) 1)
+           (char=? (string-ref perms 0) #\-))
+      (substring perms 1 (string-length perms))
+      perms))
+
+(define (pad-left s width)
+  (let ([n (string-length s)])
+    (if (>= n width) s
+        (string-append (make-string (- width n) #\space) s))))
+
+(define (pad-right s width)
+  (let ([n (string-length s)])
+    (if (>= n width) s
+        (string-append s (make-string (- width n) #\space)))))
+
+(define (list-max-length strs)
+  (let loop ([lst strs] [m 0])
+    (if (null? lst) m
+        (loop (cdr lst) (max m (string-length (car lst)))))))
+
+(define (read-entry-metadata! dir entries)
+  (let* ([names (filter (lambda (e) (not (string=? e "../"))) entries)]
+         [paths (map (lambda (e) (path-join dir (trim-end-matches e "/"))) names)])
+    (if (null? paths)
+        (set! *oil-metadata* '())
+        (let ([proc (~> (command "stat" (cons "--printf=%n\t%A\t%h\t%s\n" paths))
+                        with-stdout-piped with-stderr-piped spawn-process)])
+          (if (Ok? proc)
+              (let* ([output (read-port-to-string (child-stdout (Ok->value proc)))]
+                     [lines (filter (lambda (l) (> (string-length l) 0))
+                                     (split-many output "\n"))])
+                (set! *oil-metadata*
+                      (filter (lambda (x) x)
+                              (map (lambda (line)
+                                     (let ([parts (split-many line "\t")])
+                                       (if (>= (length parts) 4)
+                                           (cons (basename (list-ref parts 0))
+                                                 (list (list-ref parts 1)
+                                                       (list-ref parts 2)
+                                                       (list-ref parts 3)))
+                                           #false)))
+                                   lines))))
+              (set! *oil-metadata* '()))))))
 
 (define (make-buffer-text dir entries)
     (let* ([flags  (string-append
@@ -234,6 +292,8 @@
       (set! *oil-dir* canonical)
       (set! *oil-original* entries)
       (set! *oil-git-status* git-status)
+      (when *oil-show-metadata*
+        (read-entry-metadata! canonical entries))
 
       (if (oil-buffer-alive?)
           (begin
@@ -343,12 +403,34 @@
       (if (null? ps)
           #false
           (let ([git-path (cdr (car ps))]
-                [lable    (car (car ps))])
+                [lable (car (car ps))])
             ; match file or directory
             (if (or (string=? git-path name)
                     (starts-with? git-path (string-append name "/")))
                 lable
                 (loop (cdr ps))))))))
+
+(define (entry-metadata-hint entry)
+  (let* ([name (trim-end-matches entry "/")]
+         [meta (assoc name *oil-metadata*)])
+    (and meta
+         (let* ([vals (cdr meta)]
+                [perms (list-ref vals 0)]
+                [links (list-ref vals 1)]
+                [size (list-ref vals 2)])
+           ; fixed-width columns: perms=10 links=3 size=5
+           (string-append (pad-right (format-permissions perms) 10)
+                          "  " (pad-left links 3)
+                          "  " (pad-left (format-file-size size) 5))))))
+
+(define (build-entry-hint entry)
+  (let ([git (entry-git-status entry)]
+        [meta (and *oil-show-metadata* (entry-metadata-hint entry))])
+    (cond
+      [(and git meta) (string-append meta "  " git)]
+      [git git]
+      [meta meta]
+      [else #false])))
 
 (define (line-end-char-index lines n)
     (let loop ([i 0] [pos 0])
@@ -365,36 +447,41 @@
 (define (apply-oil-hints! entries)
   ; entries[0] = "../" lives on buffer line 1 and line 0 is the header
   (when (oil-buffer-alive?)
-    (let* ([rope  (editor->text *oil-doc-id*)]
-           [text  (text.rope->string rope)]
-           [lines (split-many text "\n")])
+    (let* ([rope (editor->text *oil-doc-id*)]
+           [text (text.rope->string rope)]
+           [lines (split-many text "\n")]
+           [max-len (list-max-length (if (> (length lines) 1) (cdr lines) '()))])
       (let loop ([i 0] [ents entries])
         (unless (null? ents)
-          (let* ([entry  (car ents)]
+          (let* ([entry (car ents)]
                  [line-n (+ i 1)]
-                 [label  (entry-git-status entry)])
-            (when (and label (< line-n (length lines)))
-              (let ([hint-id (add-inlay-hint (line-end-char-index lines line-n) label)])
+                 [hint (build-entry-hint entry)])
+            (when (and hint (< line-n (length lines)))
+              (let* ([line-len (string-length (list-ref lines line-n))]
+                     [pad (make-string (max 0 (+ (- max-len line-len) 2)) #\space)]
+                     [hint-id (add-inlay-hint (line-end-char-index lines line-n)
+                                               (string-append pad hint))])
                 (set! *oil-hint-ids* (cons hint-id *oil-hint-ids*)))))
           (loop (+ i 1) (cdr ents)))))))
 
 (define (reapply-oil-hints!)
-    ;; Re-derive hints from the current buffer text line by line.
-    ;; entry-git-status looks up the trimmed line content in *oil-git-status*,
-    ;; so blank or header lines produce #false and get no hint.
     (when (oil-buffer-alive?)
       (clear-oil-hints!)
-      (let* ([rope  (editor->text *oil-doc-id*)]
-             [text  (text.rope->string rope)]
-             [lines (split-many text "\n")])
+      (let* ([rope (editor->text *oil-doc-id*)]
+             [text (text.rope->string rope)]
+             [lines (split-many text "\n")]
+             [max-len (list-max-length (if (> (length lines) 1) (cdr lines) '()))])
         (let loop ([i 1])   ; i=0 is the header line, skip it
           (when (< i (length lines))
             (let* ([entry (trim (list-ref lines i))]
-                   [label (if (> (string-length entry) 0)
-                              (entry-git-status entry)
-                              #false)])
-              (when label
-                (let ([id (add-inlay-hint (line-end-char-index lines i) label)])
+                   [hint (if (> (string-length entry) 0)
+                                 (build-entry-hint entry)
+                                 #false)])
+              (when hint
+                (let* ([line-len (string-length (list-ref lines i))]
+                       [pad (make-string (max 0 (+ (- max-len line-len) 2)) #\space)]
+                       [id (add-inlay-hint (line-end-char-index lines i)
+                                                 (string-append pad hint))])
                   (set! *oil-hint-ids* (cons id *oil-hint-ids*)))))
             (loop (+ i 1)))))))
 
@@ -639,6 +726,20 @@
     (set! *oil-clipboard-op*   #false)
     (set! *oil-clipboard-path* #false)
     (set-status! "clipboard cleared"))
+
+;;@doc
+;; Toggle display of file permissions, hard-link count, and size as inlay hints
+(define (oil-toggle-metadata)
+  (if (oil-buffer-alive?)
+      (begin
+        (set! *oil-show-metadata* (not *oil-show-metadata*))
+        (when *oil-show-metadata*
+          (read-entry-metadata! *oil-dir* *oil-original*))
+        (enqueue-thread-local-callback reapply-oil-hints!)
+        (set-status! (if *oil-show-metadata*
+                         "oil: showing metadata"
+                         "oil: hiding metadata")))
+      (set-error! "no active oil buffer")))
 
 (register-hook 'document-changed
     (lambda (doc-id _old-text)
