@@ -240,9 +240,8 @@
       (if (entries-are-dir? name)
           (run-mkdir-p! path)
           (begin
-            (run-mkdir-p! (parent-name path))   ; ensure parent exists first
-            ; call-with-output-file allows to create a file without opening
-            (call-with-output-file path (lambda (_p) (void)))))))
+            (run-mkdir-p! (parent-name path))
+            (call-with-output-file path (lambda (_p) #t))))))
 
 (define (pair-same-type removed added)
     ; pairs entries of the same type in order
