@@ -2,6 +2,7 @@
 (require "helix/misc.scm")
 (require "helix/static.scm")
 (require "helix/ext.scm")
+(require "notify/notify.scm")
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix. "helix/commands.scm"))
 
@@ -35,6 +36,14 @@
 (define *oil-show-git-ignored* #false)
 (define *oil-metadata* '())
 (define *oil-show-metadata* #false)
+
+;; Display informational messages through notify.hx instead of the status line
+(define (oil-info msg)
+  (notify msg #:title "oil.hx"))
+
+;; Display error messages through notify.hx instead of the status line
+(define (oil-error msg)
+  (notify msg #:severity 'error #:title "oil.hx"))
 
 (define (path-join base name)
   (string-append base (path-separator) name))
@@ -280,7 +289,7 @@
                             '())]
            [raw-entries (with-handler
                           (lambda (err)
-                            (set-error! (string-append "oil: " (error-object-message err)))
+                            (oil-error (string-append "oil: " (error-object-message err)))
                             '())
                           (read-oil-entries canonical))]
            [entries (if *oil-show-git-ignored*
@@ -496,8 +505,7 @@
 ;; Enter directory or open file
 (define (oil-enter)
     (unless (oil-buffer-alive?)
-      (set-error! "no active oil buffer")
-      (void))
+      (oil-error "no active oil buffer"))
 
     (when (oil-buffer-alive?)
       (let* ([rope   (editor->text *oil-doc-id*)]
@@ -510,7 +518,7 @@
         (cond
           ; header line do nothing
           [(or (not entry) (string=? entry "") (starts-with? entry *oil-dir*))
-           (void)]
+           #t]
 
           ; enter parent directory
           [(string=? entry "../")
@@ -530,14 +538,14 @@
 (define (oil-up)
   (if *oil-dir*
       (open-oil-for-dir (parent-name *oil-dir*))
-      (set-error! "no active oil buffer")))
+      (oil-error "no active oil buffer")))
 
 ;;@doc
 ;; Refresh oil buffer
 (define (oil-refresh)
   (if *oil-dir*
       (open-oil-for-dir *oil-dir*)
-      (set-error! "no active oil buffer")))
+      (oil-error "no active oil buffer")))
 
 ;;@doc
 ;; Jump to the git repository root, or helix cwd if not in a repo
@@ -552,10 +560,10 @@
       (begin
         (set! *oil-show-hidden* (not *oil-show-hidden*))
         (open-oil-for-dir *oil-dir*)
-        (set-status! (if *oil-show-hidden*
+        (oil-info (if *oil-show-hidden*
                          "oil: showing dotfiles"
                          "oil: hiding dotfiles")))
-      (set-error! "no active oil buffer")))
+      (oil-error "no active oil buffer")))
 
 ;;@doc
 ;; Toggle visibility of git-ignored files and directories
@@ -564,10 +572,10 @@
       (begin
         (set! *oil-show-git-ignored* (not *oil-show-git-ignored*))
         (open-oil-for-dir *oil-dir*)
-        (set-status! (if *oil-show-git-ignored*
+        (oil-info (if *oil-show-git-ignored*
                          "oil: showing git-ignored files"
                          "oil: hiding git-ignored files")))
-      (set-error! "no active oil buffer")))
+      (oil-error "no active oil buffer")))
 
 ;;@doc
 ;; Set default visibility for dotfiles and git-ignored entries.
@@ -579,8 +587,7 @@
 ;; Save oil changes
 (define (oil-save)
     (unless (oil-buffer-alive?)
-      (set-error! "no active oil buffer Run :oil first")
-      (void))
+      (oil-error "no active oil buffer Run :oil first"))
 
     (when (oil-buffer-alive?)
       (let* ([rope    (editor->text *oil-doc-id*)]
@@ -650,15 +657,15 @@
             (begin
               (let ([n (+ (length renames) (length to-delete) (length to-create))])
                 (if (= n 0)
-                    (set-status! "nothing to do")
-                    (set-status! (string-append "applied "
+                    (oil-info "nothing to do")
+                    (oil-info (string-append "applied "
                                                 (number->string n)
                                                 " operation(s) in "
                                                 *oil-dir*))))
               (open-oil-for-dir *oil-dir*))
             (begin
               (open-oil-for-dir *oil-dir*) ; refresh even on partial failure
-              (set-error! (string-append "errors: "
+              (oil-error (string-append "errors: "
                                          (string-join (reverse errors) " | "))))))))
 
 ;;@doc
@@ -675,8 +682,8 @@
             (set! *oil-clipboard-op*   'copy)
             (set! *oil-clipboard-path* (full-path-for entry))
             ; basename shows just the name not the full path
-            (set-status! (string-append "yank: " entry)))
-          (set-error! "no entry under cursor"))))
+            (oil-info (string-append "yank: " entry)))
+          (oil-error "no entry under cursor"))))
 
 ;;@doc
 ;; Mark the entry under cursor for moving
@@ -686,18 +693,18 @@
           (begin
             (set! *oil-clipboard-op*   'move)
             (set! *oil-clipboard-path* (full-path-for entry))
-            (set-status! (string-append "cut: " entry)))
-          (set-error! "no entry under cursor"))))
+            (oil-info (string-append "cut: " entry)))
+          (oil-error "no entry under cursor"))))
 
 ;;@doc
 ;; Paste clipboard item into the current oil directory
 (define (oil-paste)
     (cond
       [(not (oil-buffer-alive?))
-       (set-error! "no active oil buffer")]
+       (oil-error "no active oil buffer")]
 
       [(not *oil-clipboard-path*)
-       (set-error! "clipboard is empty")]
+       (oil-error "clipboard is empty")]
 
       [else
        (let* ([src  *oil-clipboard-path*]
@@ -705,17 +712,17 @@
               [dest (path-join *oil-dir* name)])
          (with-handler
            (lambda (err)
-             (set-error! (string-append "paste failed: " (error-object-message err))))
+             (oil-error (string-append "paste failed: " (error-object-message err))))
            (begin
              (cond
                [(eq? *oil-clipboard-op* 'copy)
                 (run-cp-r! src dest)
-                (set-status! (string-append "copied " name " -> " *oil-dir*))]
+                (oil-info (string-append "copied " name " -> " *oil-dir*))]
                [(eq? *oil-clipboard-op* 'move)
                 (run-mv! src dest)
                 (set! *oil-clipboard-op*   #false)
                 (set! *oil-clipboard-path* #false)
-                (set-status! (string-append "moved " name " -> " *oil-dir*))])
+                (oil-info (string-append "moved " name " -> " *oil-dir*))])
              (open-oil-for-dir *oil-dir*))))]))
 
 
@@ -724,7 +731,7 @@
 (define (oil-clipboard-clear)
     (set! *oil-clipboard-op*   #false)
     (set! *oil-clipboard-path* #false)
-    (set-status! "clipboard cleared"))
+    (oil-info "clipboard cleared"))
 
 ;;@doc
 ;; Toggle display of file permissions, hard-link count, and size as inlay hints
@@ -735,10 +742,10 @@
         (when *oil-show-metadata*
           (read-entry-metadata! *oil-dir* *oil-original*))
         (enqueue-thread-local-callback reapply-oil-hints!)
-        (set-status! (if *oil-show-metadata*
+        (oil-info (if *oil-show-metadata*
                          "oil: showing metadata"
                          "oil: hiding metadata")))
-      (set-error! "no active oil buffer")))
+      (oil-error "no active oil buffer")))
 
 (register-hook 'document-changed
     (lambda (doc-id _old-text)
