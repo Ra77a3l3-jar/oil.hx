@@ -2,7 +2,6 @@
 (require "helix/misc.scm")
 (require "helix/static.scm")
 (require "helix/ext.scm")
-(require "notify/notify.scm")
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix. "helix/commands.scm"))
 
@@ -21,7 +20,11 @@
          oil-yank
          oil-cut
          oil-paste
-         oil-clipboard-clear)
+         oil-clipboard-clear
+         oil-info
+         oil-error
+         *oil-info-fn*
+         *oil-error-fn*)
 
 (define OIL-BUFFER-NAME "*oil*")
 
@@ -37,13 +40,18 @@
 (define *oil-metadata* '())
 (define *oil-show-metadata* #false)
 
-;; Display informational messages through notify.hx instead of the status line
-(define (oil-info msg)
-  (notify msg #:title "oil.hx"))
+;; Mutable message dispatchers.
+;; oil/oil-notify.scm can swap these to route messages through notify.hx.
+(define *oil-info-fn* (box set-status!))
+(define *oil-error-fn* (box set-error!))
 
-;; Display error messages through notify.hx instead of the status line
+;; Display informational messages.
+(define (oil-info msg)
+  ((unbox *oil-info-fn*) msg))
+
+;; Display error messages.
 (define (oil-error msg)
-  (notify msg #:severity 'error #:title "oil.hx"))
+  ((unbox *oil-error-fn*) msg))
 
 (define (path-join base name)
   (string-append base (path-separator) name))
