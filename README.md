@@ -20,14 +20,31 @@ forge pkg install --git https://github.com/Ra77a3l3-jar/oil.hx.git
 ```
  
 **3. Load the plugin** by adding this to your `init.scm`:
- 
+  
 ```scheme
 (require "oil/oil.scm")
+
+;; Optional: display messages as notify.hx popups.
+;; Install notify.hx (see README) and uncomment the next line.
+;; (require "oil/oil-notify.scm")
 
 ;; Optional: set defaults (both #false by default)
 ;; (oil-configure! show-dotfiles show-git-ignored)
 (oil-configure! #false #false)
 ```
+
+### Optional: notify.hx integration
+
+oil.hx can display its messages as popup notifications using [notify.hx](https://github.com/chuwy/notify.hx).
+
+1. Install [notify.hx](https://github.com/chuwy/notify.hx):
+   ```sh
+   forge pkg install --git https://github.com/chuwy/notify.hx.git
+
+   ```
+2. Add `(require "notify/notify.scm")` in `init.scm`
+
+3. Add `(require "oil/oil-notify.scm")` after `(require "oil/oil.scm")` in `init.scm`
 
 ---
 
