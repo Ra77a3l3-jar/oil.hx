@@ -381,7 +381,7 @@
           #false
           (if (and (string=? (car (car ps)) " !")
                    (or (string=? (cdr (car ps)) name)
-                       (starts-with? (cdr (car ps)) (string-append name "/"))))
+                       (starts-with? (string-append name "/") (cdr (car ps)))))
               #true
               (loop (cdr ps)))))))
 
