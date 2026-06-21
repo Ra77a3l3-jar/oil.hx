@@ -381,13 +381,13 @@
           #false
           (if (and (string=? (car (car ps)) " !")
                    (or (string=? (cdr (car ps)) name)
-                       (starts-with? (cdr (car ps)) (string-append name "/"))))
+                       (starts-with? (string-append name "/") (cdr (car ps)))))
               #true
               (loop (cdr ps)))))))
 
 (define (parse-git-status-pairs dir)
     (let* ([root (git-repo-root dir)]
-           [proc (~> (command "git" (list "-C" dir "status" "--porcelain" "--ignored"))
+           [proc (~> (command "git" (list "-C" dir "status" "--porcelain" "--ignored=matching"))
                      with-stdout-piped with-stderr-piped spawn-process)])
       (if (Ok? proc)
           (let* ([output (read-port-to-string (child-stdout (Ok->value proc)))]
