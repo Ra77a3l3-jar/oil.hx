@@ -387,7 +387,7 @@
 
 (define (parse-git-status-pairs dir)
     (let* ([root (git-repo-root dir)]
-           [proc (~> (command "git" (list "-C" dir "status" "--porcelain" "--ignored"))
+           [proc (~> (command "git" (list "-C" dir "status" "--porcelain" "--ignored=matching"))
                      with-stdout-piped with-stderr-piped spawn-process)])
       (if (Ok? proc)
           (let* ([output (read-port-to-string (child-stdout (Ok->value proc)))]
