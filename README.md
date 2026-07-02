@@ -88,21 +88,21 @@ You can bind the commands to keys either in `config.toml` or in `init.scm`.
 **`config.toml`:**
 ```toml
 [keys.normal.space.o]
-o = "oil"
-e = "oil-enter"
-b = "oil-back"
-g = "oil-root"
-s = "oil-save"
-r = "oil-refresh"
-q = "oil-close"
-h = "oil-toggle-hidden"
-i = "oil-toggle-git-ignored"
+o = ":oil"
+e = ":oil-enter"
+b = ":oil-back"
+g = ":oil-root"
+s = ":oil-save"
+r = ":oil-refresh"
+q = ":oil-close"
+h = ":oil-toggle-hidden"
+i = ":oil-toggle-git-ignored"
 
 [keys.normal.space.o.m]
-y = "oil-yank"
-x = "oil-cut"
-p = "oil-paste"
-c = "oil-clipboard-clear"
+y = ":oil-yank"
+x = ":oil-cut"
+p = ":oil-paste"
+c = ":oil-clipboard-clear"
 ```
  
 **`init.scm`:**
