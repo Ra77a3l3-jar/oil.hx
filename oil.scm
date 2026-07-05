@@ -454,11 +454,19 @@
           (+ pos (string-length (list-ref lines i)))
           (loop (+ i 1) (+ pos (string-length (list-ref lines i)) 1)))))
 
+(define (line-start-char-index lines n)
+  (if (= n 0)
+      0
+      (+ (line-end-char-index lines (- n 1)) 1)))
+
 (define (clear-oil-hints!)
   (for-each
     (lambda (id) (remove-inlay-hint-by-id (list-ref id 0) (list-ref id 1)))
     *oil-hint-ids*)
-  (set! *oil-hint-ids* '()))
+  (set! *oil-hint-ids* '())
+  (when (oil-buffer-alive?)
+    (clear-document-highlights! "oil-dirs")
+    (clear-document-highlights! "oil-files")))
 
 (define (apply-oil-hints! entries)
   ; entries[0] = "../" lives on buffer line 1 and line 0 is the header
@@ -466,19 +474,32 @@
     (let* ([rope (editor->text *oil-doc-id*)]
            [text (text.rope->string rope)]
            [lines (split-many text "\n")]
-           [max-len (list-max-length (if (> (length lines) 1) (cdr lines) '()))])
+           [max-len (list-max-length (if (> (length lines) 1) (cdr lines) '()))]
+           [dir-ranges '()]
+           [file-ranges '()])
       (let loop ([i 0] [ents entries])
         (unless (null? ents)
           (let* ([entry (car ents)]
                  [line-n (+ i 1)]
                  [hint (build-entry-hint entry)])
-            (when (and hint (< line-n (length lines)))
-              (let* ([line-len (string-length (list-ref lines line-n))]
-                     [pad (make-string (max 0 (+ (- max-len line-len) 2)) #\space)]
-                     [hint-id (add-inlay-hint (line-end-char-index lines line-n)
-                                               (string-append pad hint))])
-                (set! *oil-hint-ids* (cons hint-id *oil-hint-ids*)))))
-          (loop (+ i 1) (cdr ents)))))))
+            (when (< line-n (length lines))
+              (let ([start (line-start-char-index lines line-n)]
+                    [end   (line-end-char-index lines line-n)])
+                (unless (equal? entry "../")
+                  (if (entries-are-dir? entry)
+                      (set! dir-ranges (cons (cons start end) dir-ranges))
+                      (set! file-ranges (cons (cons start end) file-ranges)))))
+              (when hint
+                (let* ([line-len (string-length (list-ref lines line-n))]
+                       [pad (make-string (max 0 (+ (- max-len line-len) 2)) #\space)]
+                       [hint-id (add-inlay-hint (line-end-char-index lines line-n)
+                                                 (string-append pad hint))])
+                  (set! *oil-hint-ids* (cons hint-id *oil-hint-ids*))))))
+          (loop (+ i 1) (cdr ents))))
+      (unless (null? dir-ranges)
+        (set-document-highlights! "oil-dirs" (reverse dir-ranges) "constant"))
+      (unless (null? file-ranges)
+        (set-document-highlights! "oil-files" (reverse file-ranges) "ui.text")))))
 
 (define (reapply-oil-hints!)
     (when (oil-buffer-alive?)
@@ -486,20 +507,33 @@
       (let* ([rope (editor->text *oil-doc-id*)]
              [text (text.rope->string rope)]
              [lines (split-many text "\n")]
-             [max-len (list-max-length (if (> (length lines) 1) (cdr lines) '()))])
+             [max-len (list-max-length (if (> (length lines) 1) (cdr lines) '()))]
+             [dir-ranges '()]
+             [file-ranges '()])
         (let loop ([i 1])   ; i=0 is the header line, skip it
           (when (< i (length lines))
             (let* ([entry (trim (list-ref lines i))]
                    [hint (if (> (string-length entry) 0)
                                  (build-entry-hint entry)
                                  #false)])
+              (when (> (string-length entry) 0)
+                (let ([start (line-start-char-index lines i)]
+                      [end   (line-end-char-index lines i)])
+                  (unless (equal? entry "../")
+                    (if (entries-are-dir? entry)
+                        (set! dir-ranges (cons (cons start end) dir-ranges))
+                        (set! file-ranges (cons (cons start end) file-ranges))))))
               (when hint
                 (let* ([line-len (string-length (list-ref lines i))]
                        [pad (make-string (max 0 (+ (- max-len line-len) 2)) #\space)]
                        [id (add-inlay-hint (line-end-char-index lines i)
                                                  (string-append pad hint))])
                   (set! *oil-hint-ids* (cons id *oil-hint-ids*)))))
-            (loop (+ i 1)))))))
+            (loop (+ i 1))))
+        (unless (null? dir-ranges)
+          (set-document-highlights! "oil-dirs" (reverse dir-ranges) "constant"))
+        (unless (null? file-ranges)
+          (set-document-highlights! "oil-files" (reverse file-ranges) "ui.text")))))
 
 ;;@doc
 ;; Open oil file manager
