@@ -4,6 +4,7 @@
 (require "helix/ext.scm")
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix. "helix/commands.scm"))
+(require "notify/notify.scm")
 
 ; creates the cmd :oil
 (provide oil
@@ -22,9 +23,7 @@
          oil-paste
          oil-clipboard-clear
          oil-info
-         oil-error
-         *oil-info-fn*
-         *oil-error-fn*)
+         oil-error)
 
 (define OIL-BUFFER-NAME "*oil*")
 
@@ -40,18 +39,13 @@
 (define *oil-metadata* '())
 (define *oil-show-metadata* #false)
 
-;; Mutable message dispatchers.
-;; oil/oil-notify.scm can swap these to route messages through notify.hx.
-(define *oil-info-fn* (box set-status!))
-(define *oil-error-fn* (box set-error!))
-
 ;; Display informational messages.
 (define (oil-info msg)
-  ((unbox *oil-info-fn*) msg))
+  (notify msg #:title "oil.hx"))
 
 ;; Display error messages.
 (define (oil-error msg)
-  ((unbox *oil-error-fn*) msg))
+  (notify msg #:severity 'error #:title "oil.hx"))
 
 (define (path-join base name)
   (string-append base (path-separator) name))
@@ -591,6 +585,12 @@
   (set! *oil-show-hidden* show-hidden)
   (set! *oil-show-git-ignored* show-git-ignored))
 
+(define (build-save-summary renames to-delete to-create)
+  (let* ([rename-lines (map (lambda (p) (string-append "Renamed " (car p) " -> " (cdr p))) renames)]
+         [delete-lines (map (lambda (name) (string-append "Deleted " name)) to-delete)]
+         [create-lines (map (lambda (name) (string-append "Created " name)) to-create)])
+    (string-join (append rename-lines delete-lines create-lines) "\n")))
+
 ;;@doc
 ;; Save oil changes
 (define (oil-save)
@@ -612,7 +612,9 @@
              [result    (pair-renames removed added)]
              [renames   (list-ref result 0)]
              [to-delete (list-ref result 1)]
-             [to-create (list-ref result 2)])
+             [to-create (list-ref result 2)]
+
+             [actual-renames (filter (lambda (p) (not (string=? (car p) (cdr p)))) renames)])
 
         ; collect errors without aborting
         (define errors '())
@@ -626,25 +628,23 @@
             (thunk)))
 
         ; renames file
-        (let ([actual (filter (lambda (p) (not (string=? (car p) (cdr p)))) renames)])
+        ; moves every source to a temp name
+        (for-each
+          (lambda (pair)
+            (try! (string-append "rename " (car pair) " -> " (cdr pair))
+                  (lambda ()
+                    (run-mv! (full-path-for (car pair))
+                             (string-append (full-path-for (car pair)) ".~oil~")))))
+          actual-renames)
 
-            ; moves every source to a temp name
-            (for-each
-            (lambda (pair)
-                (try! (string-append "rename " (car pair) " -> " (cdr pair))
-                    (lambda ()
-                        (run-mv! (full-path-for (car pair))
-                                (string-append (full-path-for (car pair)) ".~oil~")))))
-            actual)
-
-            ; moves every temp name to the final destination
-            (for-each
-            (lambda (pair)
-                (try! (string-append "rename " (car pair) " -> " (cdr pair))
-                    (lambda ()
-                        (run-mv! (string-append (full-path-for (car pair)) ".~oil~")
-                                (full-path-for (cdr pair))))))
-            actual))
+        ; moves every temp name to the final destination
+        (for-each
+          (lambda (pair)
+            (try! (string-append "rename " (car pair) " -> " (cdr pair))
+                  (lambda ()
+                    (run-mv! (string-append (full-path-for (car pair)) ".~oil~")
+                             (full-path-for (cdr pair))))))
+          actual-renames)
 
         ; delete
         (for-each
@@ -663,13 +663,10 @@
         ; report and refresh
         (if (null? errors)
             (begin
-              (let ([n (+ (length renames) (length to-delete) (length to-create))])
+              (let ([n (+ (length actual-renames) (length to-delete) (length to-create))])
                 (if (= n 0)
                     (oil-info "nothing to do")
-                    (oil-info (string-append "applied "
-                                                (number->string n)
-                                                " operation(s) in "
-                                                *oil-dir*))))
+                    (oil-info (build-save-summary actual-renames to-delete to-create))))
               (open-oil-for-dir *oil-dir*))
             (begin
               (open-oil-for-dir *oil-dir*) ; refresh even on partial failure
