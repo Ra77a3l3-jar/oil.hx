@@ -5,7 +5,7 @@ A file manager plugin for [Helix](https://github.com/helix-editor/helix/) that l
  
 > Heavily inspired by [oil.nvim](https://github.com/stevearc/oil.nvim).
 
-![oil.hx preview](assets/preview.gif)
+![oil.hx preview](.github/assets/preview.gif)
 
 ---
  
