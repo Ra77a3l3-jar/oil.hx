@@ -1,10 +1,12 @@
 (require "helix/editor.scm")
 (require "helix/misc.scm")
+(require "helix/components.scm")
 (require "helix/static.scm")
 (require "helix/ext.scm")
 (require-builtin helix/core/text as text.)
 (require (prefix-in helix. "helix/commands.scm"))
 (require "notify/notify.scm")
+(require "glyph/glyph.scm")
 
 ; creates the cmd :oil
 (provide oil
@@ -433,20 +435,44 @@
                           "  " (pad-left links 3)
                           "  " (pad-left (format-file-size size) 5))))))
 
-(define (build-entry-hint entry)
-  (let ([git (entry-git-status entry)]
-        [meta (and *oil-show-metadata* (entry-metadata-hint entry))])
-    (cond
-      [(and git meta) (string-append meta "  " git)]
-      [git git]
-      [meta meta]
-      [else #false])))
+(define (git-label->status label)
+  ; maps the porcelain labels stored in *oil-git-status* to glyph statuses
+  (cond
+    [(string=? label " ?") 'untracked]
+    [(string=? label " !") 'ignored]
+    [(string=? label " →") 'renamed]
+    [(string=? label " +") 'added]
+    [(string=? label " ~") 'modified]
+    [else #false]))
 
-(define (line-end-char-index lines n)
-    (let loop ([i 0] [pos 0])
-      (if (= i n)
-          (+ pos (string-length (list-ref lines i)))
-          (loop (+ i 1) (+ pos (string-length (list-ref lines i)) 1)))))
+(define (entry-icon-segments entry)
+  ; constant width prefix so the names stay aligned: git cell, space, icon, space
+  (let* ([git (entry-git-status entry)]
+         [status (and git (git-label->status git))]
+         [icon (if (entries-are-dir? entry) (glyph-dir-icon entry) (glyph-icon entry))]
+         [color (if (entries-are-dir? entry) (glyph-dir-color entry) (glyph-color entry))])
+    (list (if status
+              (list (glyph-git-icon status) (glyph-style (glyph-git-color status)))
+              (list " " #false))
+          (list " " #false)
+          (list icon (glyph-style color))
+          (list " " #false))))
+
+(define (oil-line-hints! line-n entry lines max-len)
+  ; colored git status and file icon rendered before the entry name
+  (let ([id (add-styled-line-inlay-hint line-n 'start (entry-icon-segments entry))])
+    (when id (set! *oil-hint-ids* (cons id *oil-hint-ids*))))
+  (when *oil-show-metadata*
+    (let ([meta (entry-metadata-hint entry)])
+      (when meta
+        (let* ([line-len (string-length (list-ref lines line-n))]
+               [pad (make-string (max 0 (+ (- max-len line-len) 2)) #\space)]
+               [id (add-styled-line-inlay-hint
+                     line-n
+                     'end
+                     (list (list (string-append pad meta)
+                                 (theme-scope-ref "ui.virtual.inlay-hint"))))])
+          (when id (set! *oil-hint-ids* (cons id *oil-hint-ids*))))))))
 
 (define (clear-oil-hints!)
   (for-each
@@ -463,15 +489,9 @@
            [max-len (list-max-length (if (> (length lines) 1) (cdr lines) '()))])
       (let loop ([i 0] [ents entries])
         (unless (null? ents)
-          (let* ([entry (car ents)]
-                 [line-n (+ i 1)]
-                 [hint (build-entry-hint entry)])
-            (when (and hint (< line-n (length lines)))
-              (let* ([line-len (string-length (list-ref lines line-n))]
-                     [pad (make-string (max 0 (+ (- max-len line-len) 2)) #\space)]
-                     [hint-id (add-inlay-hint (line-end-char-index lines line-n)
-                                               (string-append pad hint))])
-                (set! *oil-hint-ids* (cons hint-id *oil-hint-ids*)))))
+          (let ([line-n (+ i 1)])
+            (when (< line-n (length lines))
+              (oil-line-hints! line-n (car ents) lines max-len)))
           (loop (+ i 1) (cdr ents)))))))
 
 (define (reapply-oil-hints!)
@@ -483,16 +503,9 @@
              [max-len (list-max-length (if (> (length lines) 1) (cdr lines) '()))])
         (let loop ([i 1])   ; i=0 is the header line, skip it
           (when (< i (length lines))
-            (let* ([entry (trim (list-ref lines i))]
-                   [hint (if (> (string-length entry) 0)
-                                 (build-entry-hint entry)
-                                 #false)])
-              (when hint
-                (let* ([line-len (string-length (list-ref lines i))]
-                       [pad (make-string (max 0 (+ (- max-len line-len) 2)) #\space)]
-                       [id (add-inlay-hint (line-end-char-index lines i)
-                                                 (string-append pad hint))])
-                  (set! *oil-hint-ids* (cons id *oil-hint-ids*)))))
+            (let ([entry (trim (list-ref lines i))])
+              (when (> (string-length entry) 0)
+                (oil-line-hints! i entry lines max-len)))
             (loop (+ i 1)))))))
 
 ;;@doc
@@ -757,6 +770,5 @@
 (register-hook 'document-changed
     (lambda (doc-id _old-text)
       (when (and (oil-buffer-alive?)
-                 (equal? doc-id *oil-doc-id*)
-                 (not (null? *oil-git-status*)))
+                 (equal? doc-id *oil-doc-id*))
         (enqueue-thread-local-callback reapply-oil-hints!))))
