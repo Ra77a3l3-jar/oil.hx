@@ -721,7 +721,9 @@
            (begin
              (cond
                [(eq? *oil-clipboard-op* 'copy)
-                (run-cp-r! src dest)
+                (if (equal? src dest)
+                  (run-cp-r! src (string-append dest " (copy)"))
+                  (run-cp-r! src dest))
                 (oil-info (string-append "copied " name " -> " *oil-dir*))]
                [(eq? *oil-clipboard-op* 'move)
                 (run-mv! src dest)
