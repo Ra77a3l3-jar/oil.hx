@@ -20,6 +20,7 @@
          oil-toggle-git-ignored
          oil-toggle-metadata
          oil-configure!
+         oil-configure-hints!
          oil-yank
          oil-cut
          oil-paste
@@ -40,6 +41,7 @@
 (define *oil-show-git-ignored* #false)
 (define *oil-metadata* '())
 (define *oil-show-metadata* #false)
+(define *oil-hint-layout* (hash 'git-status 'start 'icon 'start 'metadata 'end))
 
 ;; Display informational messages.
 (define (oil-info msg)
@@ -422,7 +424,7 @@
                 lable
                 (loop (cdr ps))))))))
 
-(define (entry-metadata-hint entry)
+(define (entry-metadata-segments entry)
   (let* ([name (trim-end-matches entry "/")]
          [meta (assoc name *oil-metadata*)])
     (and meta
@@ -431,9 +433,12 @@
                 [links (list-ref vals 1)]
                 [size (list-ref vals 2)])
            ; fixed-width columns: perms=10 links=3 size=5
-           (string-append (pad-right (format-permissions perms) 10)
-                          "  " (pad-left links 3)
-                          "  " (pad-left (format-file-size size) 5))))))
+           ; colors per type of info permission and size
+           (list (list (pad-right (format-permissions perms) 10) (glyph-style "#f9e2af"))
+                 (list "  " #false)
+                 (list (pad-left links 3) (glyph-style "#7f849c"))
+                 (list "  " #false)
+                 (list (pad-left (format-file-size size) 5) (glyph-style "#a6e3a1")))))))
 
 (define (git-label->status label)
   ; maps the porcelain labels stored in *oil-git-status* to glyph statuses
@@ -445,34 +450,48 @@
     [(string=? label " ~") 'modified]
     [else #false]))
 
-(define (entry-icon-segments entry)
-  ; constant width prefix so the names stay aligned: git cell, space, icon, space
+(define (entry-git-piece entry)
+  ; constant width cell so files with no git status are still inline with other files
   (let* ([git (entry-git-status entry)]
-         [status (and git (git-label->status git))]
-         [icon (if (entries-are-dir? entry) (glyph-dir-icon entry) (glyph-icon entry))]
-         [color (if (entries-are-dir? entry) (glyph-dir-color entry) (glyph-color entry))])
+         [status (and git (git-label->status git))])
     (list (if status
               (list (glyph-git-icon status) (glyph-style (glyph-git-color status)))
-              (list " " #false))
-          (list " " #false)
-          (list icon (glyph-style color))
-          (list " " #false))))
+              (list " " #false)))))
+
+(define (entry-icon-piece entry)
+  (let ([icon (if (entries-are-dir? entry) (glyph-dir-icon entry) (glyph-icon entry))]
+        [color (if (entries-are-dir? entry) (glyph-dir-color entry) (glyph-color entry))])
+    (list (list icon (glyph-style color)))))
+
+(define (entry-metadata-piece entry)
+  (and *oil-show-metadata* (entry-metadata-segments entry)))
+
+(define (oil-hint-pieces side entry)
+  (filter (lambda (p) (and p (not (null? p))))
+          (list (and (equal? (hash-try-get *oil-hint-layout* 'git-status) side) (entry-git-piece entry))
+                (and (equal? (hash-try-get *oil-hint-layout* 'icon) side) (entry-icon-piece entry))
+                (and (equal? (hash-try-get *oil-hint-layout* 'metadata) side) (entry-metadata-piece entry)))))
+
+(define (oil-join-pieces pieces)
+  (cond
+    [(null? pieces) '()]
+    [(null? (cdr pieces)) (car pieces)]
+    [else (append (car pieces) (list (list " " #false)) (oil-join-pieces (cdr pieces)))]))
 
 (define (oil-line-hints! line-n entry lines max-len)
-  ; colored git status and file icon rendered before the entry name
-  (let ([id (add-styled-line-inlay-hint line-n 'start (entry-icon-segments entry))])
-    (when id (set! *oil-hint-ids* (cons id *oil-hint-ids*))))
-  (when *oil-show-metadata*
-    (let ([meta (entry-metadata-hint entry)])
-      (when meta
-        (let* ([line-len (string-length (list-ref lines line-n))]
-               [pad (make-string (max 0 (+ (- max-len line-len) 2)) #\space)]
-               [id (add-styled-line-inlay-hint
-                     line-n
-                     'end
-                     (list (list (string-append pad meta)
-                                 (theme-scope-ref "ui.virtual.inlay-hint"))))])
-          (when id (set! *oil-hint-ids* (cons id *oil-hint-ids*))))))))
+  (let ([start-segs (oil-join-pieces (oil-hint-pieces 'start entry))])
+    (unless (null? start-segs)
+      (let ([id (add-styled-line-inlay-hint line-n 'start (append start-segs (list (list " " #false))))])
+        (when id (set! *oil-hint-ids* (cons id *oil-hint-ids*))))))
+  (let ([end-segs (oil-join-pieces (oil-hint-pieces 'end entry))])
+    (unless (null? end-segs)
+      (let* ([line-len (string-length (list-ref lines line-n))]
+             [pad (make-string (max 0 (+ (- max-len line-len) 2)) #\space)]
+             [id (add-styled-line-inlay-hint
+                   line-n
+                   'end
+                   (cons (list pad #false) end-segs))])
+        (when id (set! *oil-hint-ids* (cons id *oil-hint-ids*)))))))
 
 (define (clear-oil-hints!)
   (for-each
@@ -734,7 +753,9 @@
            (begin
              (cond
                [(eq? *oil-clipboard-op* 'copy)
-                (run-cp-r! src dest)
+                (if (equal? src dest)
+                  (run-cp-r! src (string-append dest " (copy)"))
+                  (run-cp-r! src dest))
                 (oil-info (string-append "copied " name " -> " *oil-dir*))]
                [(eq? *oil-clipboard-op* 'move)
                 (run-mv! src dest)
@@ -764,6 +785,13 @@
                          "oil: showing metadata"
                          "oil: hiding metadata")))
       (oil-error "no active oil buffer")))
+
+;;@doc
+;; Choose the side for all the hints
+(define (oil-configure-hints! #:git-status [git-status 'start] #:icon [icon 'start] #:metadata [metadata 'end])
+  (set! *oil-hint-layout* (hash 'git-status git-status 'icon icon 'metadata metadata))
+  (when (oil-buffer-alive?)
+    (enqueue-thread-local-callback reapply-oil-hints!)))
 
 (register-hook 'document-changed
     (lambda (doc-id _old-text)
