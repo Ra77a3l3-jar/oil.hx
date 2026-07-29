@@ -1,3 +1,5 @@
+(require-builtin helix/core/keymaps as helix.keymaps.)
+
 (require "helix/editor.scm")
 (require "helix/misc.scm")
 (require "helix/static.scm")
@@ -23,7 +25,8 @@
          oil-paste
          oil-clipboard-clear
          oil-info
-         oil-error)
+         oil-error
+         OIL-BUFFER-NAME)
 
 (define OIL-BUFFER-NAME "*oil*")
 
@@ -320,7 +323,10 @@
                 (let* ([view-id (editor-focus)]
                        [doc-id  (editor->doc-id view-id)])
                   (set! *oil-doc-id* doc-id)
+
                   (set-scratch-buffer-name! OIL-BUFFER-NAME)
+                  (helix.keymaps.#%add-reverse-mapping (doc-id->usize doc-id) OIL-BUFFER-NAME)
+
                   (populate-oil-buffer! canonical entries)
                   (clear-oil-hints!)
                   (apply-oil-hints! entries))))))))
