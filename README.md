@@ -43,7 +43,6 @@ its messages (saved/renamed/deleted files and errors) are shown as popup notific
 | `:oil` | Open the file manager in the current directory |
 | `:oil-enter` | Enter the directory under the cursor |
 | `:oil-up` | Navigate to the parent directory |
-| `:oil-back` | Navigate to the parent directory |
 | `:oil-save` | Apply all pending edits to the filesystem |
 | `:oil-refresh` | Reload the buffer, discarding unsaved changes |
 | `:oil-close` | Close the buffer |
