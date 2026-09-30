@@ -534,8 +534,16 @@
 
           ; enter folder
           [(ends-with? entry "/")
-           (let ([dirname (trim-end-matches entry "/")])
-             (open-oil-for-dir (path-join *oil-dir* dirname)))]
+           (let* ([dirname (trim-end-matches entry "/")]
+                  [path (path-join *oil-dir* dirname)])
+             ; A new directory only exists in the oil buffer until saved. Apply the
+             ; pending changes before entering it, then check that it was created.
+             (when (and (not (is-dir? path))
+                        (not (member entry *oil-original*)))
+               (oil-save))
+             (if (is-dir? path)
+                 (open-oil-for-dir path)
+                 (oil-error (string-append "cannot enter missing directory: " path))))]
 
           ; open file in new buffer
           [else
