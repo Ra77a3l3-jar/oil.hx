@@ -53,6 +53,7 @@ its messages (saved/renamed/deleted files and errors) are shown as popup notific
 | `:oil-root` | Jump to the git repository root (or helix cwd) |
 | `:oil-toggle-hidden` | Toggle visibility of hidden dotfiles and directories |
 | `:oil-toggle-git-ignored` | Toggle visibility of git-ignored files and directories |
+| `:oil-toggle-metadata` | Toggle inline file permissions, hard-link count, and size |
 
 ### Git support
 
@@ -67,21 +68,24 @@ When inside a git repository, oil.hx automatically runs `git status` and shows i
 | `!` | Ignored |
 
 ### Keybindings (optional)
- 
-You can bind the commands to keys either in `config.toml` or in `init.scm`.
+
+**Global shortcuts**
+
+These bindings work in every buffer. Add either the `config.toml` or the `init.scm`.
  
 **`config.toml`:**
 ```toml
 [keys.normal.space.o]
 o = ":oil"
 e = ":oil-enter"
-b = ":oil-back"
+b = ":oil-up"
 g = ":oil-root"
 s = ":oil-save"
 r = ":oil-refresh"
 q = ":oil-close"
 h = ":oil-toggle-hidden"
 i = ":oil-toggle-git-ignored"
+t = ":oil-toggle-metadata"
 
 [keys.normal.space.o.m]
 y = ":oil-yank"
@@ -92,27 +96,61 @@ c = ":oil-clipboard-clear"
  
 **`init.scm`:**
 ```scheme
+(require "helix/keymaps.scm")
+
 (keymap (global)
   (normal
     (space
       (o
         (o ":oil")
         (e ":oil-enter")
-        (b ":oil-back")
+        (b ":oil-up")
         (g ":oil-root")
         (s ":oil-save")
         (r ":oil-refresh")
         (q ":oil-close")
         (h ":oil-toggle-hidden")
         (i ":oil-toggle-git-ignored")
+        (t ":oil-toggle-metadata")
         (m
           (y ":oil-yank")
           (x ":oil-cut")
           (p ":oil-paste")
           (c ":oil-clipboard-clear"))))))
 ```
- 
-With the above, all commands are reachable under `<space>o` and clipboard operations under `<space>om`.
+
+These bindings group oil commands under `<space>o` and clipboard operations under `<space>om`.
+For example, `<space>oo` opens oil, `<space>os` applies edits, and `<space>omy` copies the entry under the cursor.
+
+**Shortcuts only in the oil buffer**
+
+Alternatively, add the following to `init.scm` after `(require "oil/oil.scm")`.
+Open oil with `:oil`, then use single keys such as `-` to go up, `ret` which is ENTER key to enter a directory or open a file, and `w` to apply edits.
+
+**`init.scm`:**
+```scheme
+(require "helix/keymaps.scm")
+
+(define oil-keymaps
+  (hash
+    "normal"
+    (hash
+      "-"  ":oil-up"
+      "I"  ":oil-toggle-git-ignored"
+      "X"  ":oil-cut"
+      "c"  ":oil-clipboard-clear"
+      "h"  ":oil-toggle-hidden"
+      "p"  ":oil-paste"
+      "q"  ":oil-close"
+      "ret" ":oil-enter"
+      "w"  ":oil-save"
+      "y"  ":oil-yank")))
+
+(define oil-keybindings (deep-copy-global-keybindings))
+(merge-keybindings oil-keybindings oil-keymaps)
+(set-global-buffer-or-extension-keymap
+  (hash OIL-BUFFER-NAME oil-keybindings))
+```
 
 The header line shows active flags: `[+h]` when dotfiles are visible, `[+i]` when git-ignored files are visible.
 
